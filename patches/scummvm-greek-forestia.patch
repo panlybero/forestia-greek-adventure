@@ -165,6 +165,31 @@ index 0d644ff9..95ad90e7 100644
  
  	// Later releases are D8
  	WINGAME1_l("forestiajr", "", "FJPC/Forestia Junior.exe", "t:07a7028e8d3c13ac730eeda6b60eec6c", 1553190, Common::FR_FRA, 650),
+diff --git a/engines/director/director.cpp b/engines/director/director.cpp
+index 7857289f..0bfa63e5 100644
+--- a/engines/director/director.cpp
++++ b/engines/director/director.cpp
+@@ -285,6 +285,20 @@ Common::Error DirectorEngine::run() {
+ 	if (ConfMan.getBool("true_color") || (getGameFlags() & GF_TRUECOLOR) || debugChannelSet(-1, kDebug32bpp)) {
+ 		// Both 16bpp and 32bpp formats are supported, but 32bpp is always reported to the scripts.
+ 		_pixelformat = g_system->getSupportedFormats().front();
++
++		// Forestia was authored for "thousands of colors" (16-bit) displays.
++		// In 32bpp mode stale sprites are left on screen (e.g. the main menu
++		// signpost over the notice board) and some text gets the wrong colour,
++		// while 16bpp renders correctly. Prefer a 16bpp format when available.
++		if (!strcmp(getGameId(), "forestia")) {
++			for (auto &format : g_system->getSupportedFormats()) {
++				if (format.bytesPerPixel == 2) {
++					_pixelformat = format;
++					break;
++				}
++			}
++		}
++
+ 		_colorDepth = _pixelformat.isCLUT8() ? 8 : 32;
+ 	} else {
+ 		_pixelformat = Graphics::PixelFormat::createFormatCLUT8();
 diff --git a/engines/director/director.h b/engines/director/director.h
 index 82b393d4..036db645 100644
 --- a/engines/director/director.h

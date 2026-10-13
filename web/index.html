@@ -2,7 +2,11 @@
 <html lang="el">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="manifest" href="manifest.json">
   <title>Forestia: Η Μεγάλη Περιπέτεια (1998) - Web Edition</title>
   <link rel="icon" type="image/x-icon" href="favicon.ico">
   <style>
@@ -162,6 +166,88 @@
     footer a:hover {
       text-decoration: underline;
     }
+
+    /* On-screen controls (keyboard / fullscreen), shown on touch devices */
+    #controls {
+      position: absolute;
+      top: max(6px, env(safe-area-inset-top));
+      right: max(6px, env(safe-area-inset-right));
+      z-index: 20;
+      display: none;
+      gap: 8px;
+    }
+    #controls.visible { display: flex; }
+    .ctrl-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid rgba(139, 224, 70, 0.6);
+      background: rgba(14, 26, 12, 0.6);
+      color: #daf0b2;
+      font-size: 22px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      opacity: 0.55;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    .ctrl-btn:active, .ctrl-btn.active { opacity: 1; background: rgba(53, 110, 24, 0.85); }
+    /* Hidden text field used to summon the phone's on-screen keyboard.
+       Must stay "visible" and >=16px font, or iOS refuses focus / zooms in. */
+    #kbd-input {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      border: 0;
+      padding: 0;
+      font-size: 16px;
+      background: transparent;
+      color: transparent;
+      caret-color: transparent;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    /* Mobile / small screens: game only, fills the whole screen.
+       ScummVM letterboxes the 4:3 picture inside the canvas itself. */
+    @media (pointer: coarse), (max-width: 820px), (max-height: 560px) {
+      html, body {
+        height: 100%;
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+      body {
+        padding: 0;
+        background: #000;
+        display: block;
+      }
+      header, footer { display: none; }
+      #game-container {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        aspect-ratio: auto;
+        border-radius: 0;
+        box-shadow: none;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        touch-action: none;
+      }
+      #overlay { overflow-y: auto; }
+    }
+    @media (max-height: 560px) {
+      .splash-card { padding: 10px 18px; gap: 8px; }
+      .splash-img { max-height: 34vh; width: auto; }
+      .splash-title { font-size: 1.05rem; }
+      .btn-play { padding: 10px 28px; font-size: 1.05rem; }
+    }
   </style>
 </head>
 <body>
@@ -172,6 +258,12 @@
 
   <div id="game-container">
     <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+    <div id="controls">
+      <button id="kbd-btn" class="ctrl-btn" type="button" aria-label="Keyboard" title="Πληκτρολόγιο">&#9000;</button>
+      <button id="fs-btn" class="ctrl-btn" type="button" aria-label="Fullscreen" title="Πλήρης Οθόνη">&#x26F6;</button>
+    </div>
+    <input id="kbd-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" aria-hidden="true" tabindex="-1">
 
     <div id="overlay">
       <div class="splash-card">
@@ -197,11 +289,11 @@
     &bull;
     <a href="#" id="fullscreen-btn">Πλήρης Οθόνη</a>
     &bull;
-    <span style="opacity:.6">build 20261013c</span>
+    <span style="opacity:.6">build 20261014a</span>
   </footer>
 
   <script>
-    const BUILD = '20261013c'; // bump to bust browser caches of the engine/config
+    const BUILD = '20261014a'; // bump to bust browser caches of the engine/config
     window.resolveScummUrl = function(url) {
       var clean = url.startsWith('/') ? url.substring(1) : url;
       var base = window.location.href;
@@ -225,15 +317,175 @@
     const canvas = document.getElementById('canvas');
     const fullscreenBtn = document.getElementById('fullscreen-btn');
 
-    fullscreenBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      const container = document.getElementById('game-container');
-      if (!document.fullscreenElement) {
-        container.requestFullscreen().catch(() => {});
+    const container = document.getElementById('game-container');
+    const controls = document.getElementById('controls');
+    const kbdBtn = document.getElementById('kbd-btn');
+    const fsBtn = document.getElementById('fs-btn');
+    const kbdInput = document.getElementById('kbd-input');
+
+    // ---------- Fullscreen ----------
+    const fsSupported = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+    function isFullscreen() {
+      return !!(document.fullscreenElement || document.webkitFullscreenElement);
+    }
+    function toggleFullscreen() {
+      if (!isFullscreen()) {
+        const req = container.requestFullscreen || container.webkitRequestFullscreen;
+        if (req) {
+          const r = req.call(container, { navigationUI: 'hide' });
+          if (r && r.catch) r.catch(() => {});
+          // Prefer landscape once fullscreen (Android only; iOS ignores this)
+          if (screen.orientation && screen.orientation.lock) {
+            setTimeout(() => screen.orientation.lock('landscape').catch(() => {}), 300);
+          }
+        }
       } else {
-        document.exitFullscreen().catch(() => {});
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit) {
+          const r = exit.call(document);
+          if (r && r.catch) r.catch(() => {});
+        }
+      }
+    }
+    fullscreenBtn.addEventListener('click', (e) => { e.preventDefault(); toggleFullscreen(); });
+    if (!fsSupported) fsBtn.style.display = 'none';
+    fsBtn.addEventListener('click', (e) => { e.preventDefault(); toggleFullscreen(); });
+
+    // ---------- Keep the engine's drawing buffer in sync with the canvas size ----------
+    // SDL only re-measures the canvas on a window 'resize' event. If the engine
+    // changes resolution (or the layout changes without a window resize), the
+    // drawing buffer no longer matches the on-screen size and the picture is
+    // stretched. Detect a mismatch and poke SDL with a synthetic resize.
+    let syncTimer = null;
+    function scheduleCanvasSync() {
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        const r = canvas.getBoundingClientRect();
+        const d = window.devicePixelRatio || 1;
+        if (r.width < 2 || r.height < 2) return;
+        if (Math.abs(canvas.width - r.width * d) > 2 || Math.abs(canvas.height - r.height * d) > 2) {
+          window.dispatchEvent(new Event('resize'));
+        }
+      }, 150);
+    }
+    if (window.ResizeObserver) new ResizeObserver(scheduleCanvasSync).observe(canvas);
+    new MutationObserver(scheduleCanvasSync).observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] });
+    window.addEventListener('orientationchange', () => setTimeout(scheduleCanvasSync, 300));
+
+    // iOS doesn't shrink the layout when the on-screen keyboard opens; follow the
+    // visual viewport so the game stays visible above the keyboard.
+    if (window.visualViewport) {
+      const vv = window.visualViewport;
+      const applyVV = () => {
+        if (getComputedStyle(container).position === 'fixed') {
+          container.style.height = vv.height + 'px';
+          container.style.top = vv.offsetTop + 'px';
+        } else {
+          container.style.height = '';
+          container.style.top = '';
+        }
+        scheduleCanvasSync();
+      };
+      vv.addEventListener('resize', applyVV);
+      vv.addEventListener('scroll', applyVV);
+      window.addEventListener('resize', applyVV);
+    }
+
+    // ---------- On-screen keyboard ----------
+    // Phones only show their keyboard for a focused text field, so a hidden
+    // <input> collects the typing and every character is forwarded to the game
+    // as synthetic key events (Latin letters, digits, basic punctuation,
+    // Backspace and Enter).
+    const isTouch = window.matchMedia('(pointer: coarse)').matches || ('ontouchstart' in window);
+    const NAMED_KEYS = {
+      Backspace: ['Backspace', 8], Enter: ['Enter', 13], Escape: ['Escape', 27], Tab: ['Tab', 9],
+      ArrowLeft: ['ArrowLeft', 37], ArrowUp: ['ArrowUp', 38], ArrowRight: ['ArrowRight', 39],
+      ArrowDown: ['ArrowDown', 40], Delete: ['Delete', 46]
+    };
+    // Only unshifted punctuation: shifted symbols don't reach the game reliably.
+    const PUNCT = {
+      ' ': ['Space', 32], '-': ['Minus', 189], '.': ['Period', 190], ',': ['Comma', 188],
+      "'": ['Quote', 222], '=': ['Equal', 187], ';': ['Semicolon', 186], '/': ['Slash', 191]
+    };
+    function keyInfo(key) {
+      if (NAMED_KEYS[key]) return { code: NAMED_KEYS[key][0], keyCode: NAMED_KEYS[key][1], shift: false, text: key === 'Enter' ? '\r' : '' };
+      if (/^[a-zA-Z]$/.test(key)) return { code: 'Key' + key.toUpperCase(), keyCode: key.toUpperCase().charCodeAt(0), shift: key !== key.toLowerCase(), text: key };
+      if (/^[0-9]$/.test(key)) return { code: 'Digit' + key, keyCode: key.charCodeAt(0), shift: false, text: key };
+      if (PUNCT[key]) return { code: PUNCT[key][0], keyCode: PUNCT[key][1], shift: false, text: key };
+      return null; // non-Latin characters are not supported by the game's text fields
+    }
+    function fireKey(type, key, info) {
+      const ev = new KeyboardEvent(type, { key, code: info.code, shiftKey: info.shift, bubbles: true, cancelable: true });
+      const kc = (type === 'keypress' && info.text) ? info.text.charCodeAt(0) : info.keyCode;
+      Object.defineProperty(ev, 'keyCode', { get: () => kc });
+      Object.defineProperty(ev, 'which', { get: () => kc });
+      Object.defineProperty(ev, 'charCode', { get: () => (type === 'keypress' && info.text) ? info.text.charCodeAt(0) : 0 });
+      canvas.dispatchEvent(ev);
+    }
+    function sendKey(key) {
+      const info = keyInfo(key);
+      if (!info) return;
+      // The engine tracks Shift from its own key events, so press it explicitly.
+      const shiftInfo = { code: 'ShiftLeft', keyCode: 16, shift: true, text: '' };
+      if (info.shift) fireKey('keydown', 'Shift', shiftInfo);
+      fireKey('keydown', key, info);
+      if (info.text) fireKey('keypress', key, info);
+      fireKey('keyup', key, info);
+      if (info.shift) fireKey('keyup', 'Shift', Object.assign({}, shiftInfo, { shift: false }));
+    }
+
+    // The field always holds a few sentinel spaces so Backspace on an
+    // "empty" field still produces an input event we can see.
+    const SENTINEL = '    ';
+    let lastValue = SENTINEL;
+    function resetKbdInput() {
+      kbdInput.value = SENTINEL;
+      lastValue = SENTINEL;
+      try { kbdInput.setSelectionRange(SENTINEL.length, SENTINEL.length); } catch (e) {}
+    }
+    const isImeKey = (e) => e.isComposing || e.keyCode === 229 || e.key === 'Unidentified' || e.key === 'Process';
+    // Keep the field's own key events away from the engine; we forward them ourselves.
+    kbdInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (isImeKey(e)) return; // soft keyboards: handled via the 'input' event below
+      if (e.key === 'Enter' || NAMED_KEYS[e.key] || (e.key.length === 1 && !e.ctrlKey && !e.metaKey)) {
+        e.preventDefault();
+        sendKey(e.key);
+        if (e.key === 'Enter') resetKbdInput();
       }
     });
+    ['keyup', 'keypress'].forEach((t) => kbdInput.addEventListener(t, (e) => {
+      e.stopPropagation();
+      if (!isImeKey(e)) e.preventDefault();
+    }));
+    kbdInput.addEventListener('input', (e) => {
+      const v = kbdInput.value;
+      let i = 0;
+      while (i < lastValue.length && i < v.length && lastValue[i] === v[i]) i++;
+      for (let k = lastValue.length; k > i; k--) sendKey('Backspace');
+      for (const ch of v.slice(i)) sendKey(ch === '\n' ? 'Enter' : ch);
+      lastValue = v;
+      if (!e.isComposing && (v.length < SENTINEL.length || v.length > 200)) resetKbdInput();
+    });
+    kbdInput.addEventListener('focus', () => { resetKbdInput(); kbdBtn.classList.add('active'); });
+    kbdInput.addEventListener('blur', () => kbdBtn.classList.remove('active'));
+    // Don't let tapping the button steal focus from the field before we toggle it.
+    kbdBtn.addEventListener('pointerdown', (e) => e.preventDefault());
+    kbdBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    kbdBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (document.activeElement === kbdInput) {
+        kbdInput.blur();
+      } else {
+        resetKbdInput();
+        kbdInput.focus({ preventScroll: true });
+      }
+    });
+    if (!isTouch) kbdBtn.style.display = 'none';
+
+    function showControls() {
+      if (isTouch) controls.classList.add('visible');
+    }
 
     var Module = {
       arguments: ['forestia-win-el'],
@@ -259,6 +511,7 @@
         if (!text) {
           setTimeout(() => {
             overlay.classList.add('hidden');
+            showControls();
           }, 400);
           return;
         }
@@ -277,7 +530,9 @@
           statusBox.innerText = 'Εκκίνηση παιχνιδιού...';
           setTimeout(() => {
             overlay.classList.add('hidden');
+            showControls();
           }, 600);
+          [1000, 3000, 6000].forEach((t) => setTimeout(scheduleCanvasSync, t));
         } else {
           progressBar.style.display = 'block';
           const pct = Math.round(((this.totalDependencies - left) / this.totalDependencies) * 100);

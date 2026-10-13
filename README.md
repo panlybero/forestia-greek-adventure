@@ -42,9 +42,13 @@ This project achieves **100% preservation fidelity without modifying a single by
    - The game's bitmaps reference their custom palettes as `member N of castLib 0`, while all 72 palettes live in the external `Shared.cst` (castLib 2). ScummVM could not resolve these and fell back to the Mac system palette, producing blown-out / psychedelic colours. Palette lookups with castLib 0 are now resolved by member number across loaded cast libraries, so every image renders with its authentic palette in true-colour mode.
 4. **Web Audio Unlock**:
    - The web player creates and unlocks the `AudioContext` synchronously inside the "Play" click and hands it to SDL3, so sound works in browsers with strict autoplay policies (Safari / iOS).
-5. **Copy Protection Bypass**:
+5. **16-bit Rendering & Mobile Web Player**:
+   - Forestia was authored for "thousands of colors" displays. In 32bpp mode ScummVM left stale sprites on screen (the main-menu signpost over the notice board) and drew some labels in the wrong colour; the engine now prefers a 16bpp screen format for this game.
+   - SDL3's Emscripten backend registered its keyboard handlers several times, so every key press was typed ~6 times. `tools/patch_scummvm_js.py` post-processes the generated `scummvm.js` to de-duplicate them (and applies the sub-path/auto-boot tweaks).
+   - On phones and tablets the game fills the screen (portrait or landscape) with the correct 4:3 aspect ratio, and a ⌨ button summons the on-screen keyboard for typing save names (Latin letters/digits).
+6. **Copy Protection Bypass**:
    - Reverse-engineered the volume and file checks (`aaafores.txt` presence and root disc file checks) allowing seamless play directly from an ISO dump or extracted folder without requiring physical CD drives or virtual drive emulators.
-6. **Dialogue & Script Extraction**:
+7. **Dialogue & Script Extraction**:
    - Extracted and cataloged all **658** Greek dialogue strings, animal encyclopedia entries, UI labels, and puzzle instructions into structured JSON and text files in `docs/`.
 
 ---
@@ -54,6 +58,8 @@ This project achieves **100% preservation fidelity without modifying a single by
 ### Option 1: Web Browser (Zero Install)
 You can play the Greek version directly in any modern web browser (Chrome, Firefox, Safari, Edge) via the live WebAssembly build on GitHub Pages:
 > 🎮 **[Play Forestia in Browser](https://plympe.com/forestia-greek-adventure/)** *(Mirror: [panlybero.github.io/forestia-greek-adventure](https://panlybero.github.io/forestia-greek-adventure/))*
+
+**On mobile:** the game fills the screen in portrait or landscape. Tap ⌨ (top right) to open the keyboard when the game asks for a name, and ⛶ for fullscreen (Android). On iPhone, "Add to Home Screen" gives the most screen space.
 
 ### Option 2: Linux / macOS / Windows Desktop
 1. Clone this repository:

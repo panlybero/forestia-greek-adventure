@@ -1,6 +1,6 @@
 {
-    "short_name": "ScummVM",
-    "name": "ScummVM: Script Creation Utility for Maniac Mansion Virtual Machine",
+    "short_name": "Forestia",
+    "name": "Forestia: Η Μεγάλη Περιπέτεια (1998)",
     "icons": [
       {
         "src": "scummvm-192.png",
@@ -13,15 +13,11 @@
         "sizes": "512x512"
       }
     ],
-    "start_url": "scummvm.html",
-    "background_color": "#3367D6",
+    "start_url": "index.html",
+    "scope": "./",
+    "background_color": "#000000",
     "display": "fullscreen",
-    "theme_color": "#c60",
-    "shortcuts": [
-     
-    ],
-    "description": "ScummVM provides a way to play many classic graphical point-and-click adventure games and RPGs - such as SCUMM games (like Monkey Island and Day of the Tentacle), Revolution's Beneath A Steel Sky, and many more.",
-    "screenshots": [
-     
-    ]
+    "orientation": "landscape",
+    "theme_color": "#000000",
+    "description": "Forestia (1998 Greek edition) running in the browser via ScummVM WebAssembly."
   }

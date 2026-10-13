@@ -31,10 +31,12 @@ However, the game became completely unplayable on modern systems due to multiple
 
 ## 🔬 What Was Reverse-Engineered & Fixed
 
+> 📘 For the full technical write-up (game structure, every engine fix and its root cause, the web port, build/deploy steps and debugging tools) see **[docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md)**.
+
 This project achieves **100% preservation fidelity without modifying a single byte of the original 1998 CD-ROM assets**:
 
 1. **Native `kMacGreek` Text Engine**:
-   - Implemented the complete 128-byte `kMacGreek` single-byte encoding lookup table (`0x80`–`0xFF` mapping directly to Unicode `U+0384`–`U+03CE`) in ScummVM core.
+   - Implemented the complete `kMacGreek` (Apple x-mac-greek) single-byte code page for bytes `0x80`–`0xFF` in ScummVM core.
    - Connected Director 6 Rich Text (`RTE1`) cast decoding to cast-level encoding detection, ensuring authentic Greek typography displays natively across all operating systems.
 2. **Director 6 Cast Resolution Bugfix**:
    - Fixed an unassigned cast library crash (`castLib == -1`) in Director 6 movie player when querying cast member IDs without explicit library indices.
@@ -84,7 +86,8 @@ You can play the Greek version directly in any modern web browser (Chrome, Firef
 ```
 forestia-greek-adventure/
 ├── docs/
-│   ├── reverse_engineering_report.md  # Complete technical analysis & file structures
+│   ├── TECHNICAL_REFERENCE.md         # ★ Everything about the game, engine fixes, web port, build & debugging
+│   ├── reverse_engineering_report.md  # Original reverse-engineering analysis (first pass)
 │   ├── greek_strings.txt              # All 658 extracted Greek dialogue lines
 │   ├── greek_strings.json             # Structured JSON dialogue database
 │   └── screenshots/                   # In-engine visual verification captures
@@ -92,8 +95,13 @@ forestia-greek-adventure/
 │   └── scummvm-greek-forestia.patch   # Upstream-ready ScummVM preservation patch
 ├── tools/
 │   ├── extract_texts.py               # Dialogue and text extractor from FTEXTES.Cxt
+│   ├── patch_scummvm_js.py            # Post-process a freshly built scummvm.js (run after every wasm build)
+│   ├── build-make_http_index.py       # index.json generator for ScummVM's HTTP filesystem
+│   ├── dev/web_smoke_test.py          # Headless browser test: audio, canvas sizing, screenshots
+│   ├── dev/native_xvfb_run.sh         # Headless native run under Xvfb with scripted clicks/typing
 │   └── organize_iso_assets.py         # CD-ROM asset extraction and normalization
-├── bin/                               # Standalone binaries
+├── web/                               # WebAssembly player deployed to GitHub Pages
+├── bin/                               # Standalone binaries (git-ignored)
 └── run_forestia.sh                    # One-click desktop launcher
 ```
 
@@ -106,7 +114,7 @@ forestia-greek-adventure/
   - [x] ScummVM `kMacGreek` single-byte encoding engine.
   - [x] In-engine Greek font and text verification.
   - [x] Desktop launcher and standalone distribution bundle.
-  - [ ] GitHub Pages WebAssembly (Wasm) browser deployment.
+  - [x] GitHub Pages WebAssembly (Wasm) browser deployment (desktop + mobile).
   - [ ] Submit clean patch to official upstream ScummVM.
 - [ ] **Phase 2: Modern Engine Port (Godot 4)**
   - Reconstruct the game natively in Godot 4 using decompiled Lingo scripts and extracted audio/art assets for native 4K scaling and mobile/tablet support.

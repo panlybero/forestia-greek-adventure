@@ -113,6 +113,33 @@ index 19c96fde..65a11a82 100644
  	kDos850,
  	kDos862,
  	kDos866,
+diff --git a/engines/director/castmember/bitmap.cpp b/engines/director/castmember/bitmap.cpp
+index 6c928ccb..759ef70f 100644
+--- a/engines/director/castmember/bitmap.cpp
++++ b/engines/director/castmember/bitmap.cpp
+@@ -425,12 +425,13 @@ Graphics::Surface *BitmapCastMember::getDitherImg() {
+ 	CastMemberID currentPaletteId = score->getCurrentPalette();
+ 	if (currentPaletteId.isNull())
+ 		currentPaletteId = movie->_defaultPalette;
++	currentPaletteId = g_director->resolvePaletteId(currentPaletteId);
+ 	PaletteV4 *currentPalette = g_director->getPalette(currentPaletteId);
+ 	if (!currentPalette) {
+ 		currentPaletteId = CastMemberID(kClutSystemMac, -1);
+ 		currentPalette = g_director->getPalette(currentPaletteId);
+ 	}
+-	CastMemberID castPaletteId = _clut;
++	CastMemberID castPaletteId = g_director->resolvePaletteId(_clut);
+ 	// It is possible for Director to have saved an invalid ID in _clut;
+ 	// if this is the case, do no dithering.
+ 	if (castPaletteId.isNull())
+@@ -536,6 +537,7 @@ bool BitmapCastMember::isModified() {
+ 		CastMemberID currentPaletteId = score->getCurrentPalette();
+ 		if (currentPaletteId.isNull())
+ 			currentPaletteId = movie->_defaultPalette;
++		currentPaletteId = g_director->resolvePaletteId(currentPaletteId);
+ 		PaletteV4 *currentPalette = g_director->getPalette(currentPaletteId);
+ 		if (!currentPalette) {
+ 			currentPaletteId = CastMemberID(kClutSystemMac, -1);
 diff --git a/engines/director/castmember/richtext.cpp b/engines/director/castmember/richtext.cpp
 index b29aa879..acf7ff36 100644
 --- a/engines/director/castmember/richtext.cpp
@@ -138,6 +165,74 @@ index 0d644ff9..95ad90e7 100644
  
  	// Later releases are D8
  	WINGAME1_l("forestiajr", "", "FJPC/Forestia Junior.exe", "t:07a7028e8d3c13ac730eeda6b60eec6c", 1553190, Common::FR_FRA, 650),
+diff --git a/engines/director/director.h b/engines/director/director.h
+index 82b393d4..036db645 100644
+--- a/engines/director/director.h
++++ b/engines/director/director.h
+@@ -205,6 +205,7 @@ public:
+ 	void syncPalette();
+ 	void clearPalettes();
+ 	PaletteV4 *getPalette(CastMemberID id);
++	CastMemberID resolvePaletteId(CastMemberID id);
+ 	bool hasPalette(CastMemberID id);
+ 	void loadDefaultPalettes();
+ 
+diff --git a/engines/director/graphics.cpp b/engines/director/graphics.cpp
+index 178f0467..ecee9f0b 100644
+--- a/engines/director/graphics.cpp
++++ b/engines/director/graphics.cpp
+@@ -138,13 +138,37 @@ void DirectorEngine::loadDefaultPalettes() {
+ 	_loaded4Palette = PaletteV4(CastMemberID(kClutGrayscale, -1), grayscale4Palette, 4);
+ }
+ 
++CastMemberID DirectorEngine::resolvePaletteId(CastMemberID id) {
++	// Reference to internal palettes
++	if (id.member < 0) {
++		id.castLib = -1; // Ensure we use the default palette set
++		return id;
++	}
++
++	// Some D5/D6 movies (e.g. Forestia, authored on Mac with a shared
++	// external palette cast) store a cast library number of 0 for bitmap
++	// palettes, meaning the palette is not bound to a specific cast library.
++	// Resolve it by finding a loaded palette with a matching member number,
++	// preferring the lowest cast library number.
++	if (id.castLib == 0 && id.member > 0) {
++		CastMemberID best;
++		for (auto &it : _loadedPalettes) {
++			if (it._key.member == id.member && it._key.castLib > 0 &&
++					(best.isNull() || it._key.castLib < best.castLib))
++				best = it._key;
++		}
++		if (!best.isNull())
++			return best;
++	}
++
++	return id;
++}
++
+ PaletteV4 *DirectorEngine::getPalette(CastMemberID id) {
+ 	if (id.isNull())
+ 		return nullptr;
+ 
+-	// Reference to internal palettes
+-	if (id.member < 0)
+-		id.castLib = -1; // Ensure we use the default palette set
++	id = resolvePaletteId(id);
+ 
+ 	if (!_loadedPalettes.contains(id)) {
+ 		warning("DirectorEngine::getPalette(): Palette %s not found, hash %x", id.asString().c_str(), id.hash());
+@@ -155,9 +179,7 @@ PaletteV4 *DirectorEngine::getPalette(CastMemberID id) {
+ }
+ 
+ bool DirectorEngine::hasPalette(CastMemberID id) {
+-	// Reference to internal palettes
+-	if (id.member < 0)
+-		id.castLib = -1; // Ensure we use the default palette set
++	id = resolvePaletteId(id);
+ 
+ 	return _loadedPalettes.contains(id);
+ }
 diff --git a/engines/director/movie.cpp b/engines/director/movie.cpp
 index f3d966f1..4b130316 100644
 --- a/engines/director/movie.cpp

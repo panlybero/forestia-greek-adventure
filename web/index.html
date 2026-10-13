@@ -197,11 +197,11 @@
     &bull;
     <a href="#" id="fullscreen-btn">Πλήρης Οθόνη</a>
     &bull;
-    <span style="opacity:.6">build 20261013b</span>
+    <span style="opacity:.6">build 20261013c</span>
   </footer>
 
   <script>
-    const BUILD = '20261013b'; // bump to bust browser caches of the engine/config
+    const BUILD = '20261013c'; // bump to bust browser caches of the engine/config
     window.resolveScummUrl = function(url) {
       var clean = url.startsWith('/') ? url.substring(1) : url;
       var base = window.location.href;
@@ -287,7 +287,39 @@
       }
     };
 
+    // Browsers (Safari/iOS in particular) only allow an AudioContext to start
+    // from inside a user gesture. The engine is loaded asynchronously, so SDL
+    // would otherwise create its AudioContext long after the click and it would
+    // stay suspended (= no sound). Create + unlock it here, synchronously in the
+    // click handler, and hand it to SDL3, which reuses Module.SDL3.audioContext.
+    function unlockAudio() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      try {
+        const ctx = new AC();
+        const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start(0);
+        if (ctx.resume) ctx.resume().catch(() => {});
+        Module.SDL3 = Module.SDL3 || {};
+        Module.SDL3.audioContext = ctx;
+      } catch (e) {
+        console.warn('Audio unlock failed', e);
+      }
+      // Keep resuming on any later interaction (tab switches, iOS interruptions,
+      // or if SDL ever recreates the context outside a gesture).
+      const resume = () => {
+        const c = Module.SDL3 && Module.SDL3.audioContext;
+        if (c && c.state !== 'running' && c.resume) c.resume().catch(() => {});
+      };
+      ['pointerdown', 'mousedown', 'touchend', 'keydown'].forEach((ev) =>
+        document.addEventListener(ev, resume, { capture: true, passive: true }));
+    }
+
     startBtn.addEventListener('click', function() {
+      unlockAudio();
       startBtn.style.display = 'none';
       progressBar.style.display = 'block';
       statusBox.innerText = 'Φόρτωση μηχανής ScummVM WebAssembly...';

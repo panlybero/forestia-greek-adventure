@@ -38,9 +38,13 @@ This project achieves **100% preservation fidelity without modifying a single by
    - Connected Director 6 Rich Text (`RTE1`) cast decoding to cast-level encoding detection, ensuring authentic Greek typography displays natively across all operating systems.
 2. **Director 6 Cast Resolution Bugfix**:
    - Fixed an unassigned cast library crash (`castLib == -1`) in Director 6 movie player when querying cast member IDs without explicit library indices.
-3. **Copy Protection Bypass**:
+3. **Shared-Cast Palette Resolution Fix**:
+   - The game's bitmaps reference their custom palettes as `member N of castLib 0`, while all 72 palettes live in the external `Shared.cst` (castLib 2). ScummVM could not resolve these and fell back to the Mac system palette, producing blown-out / psychedelic colours. Palette lookups with castLib 0 are now resolved by member number across loaded cast libraries, so every image renders with its authentic palette in true-colour mode.
+4. **Web Audio Unlock**:
+   - The web player creates and unlocks the `AudioContext` synchronously inside the "Play" click and hands it to SDL3, so sound works in browsers with strict autoplay policies (Safari / iOS).
+5. **Copy Protection Bypass**:
    - Reverse-engineered the volume and file checks (`aaafores.txt` presence and root disc file checks) allowing seamless play directly from an ISO dump or extracted folder without requiring physical CD drives or virtual drive emulators.
-4. **Dialogue & Script Extraction**:
+6. **Dialogue & Script Extraction**:
    - Extracted and cataloged all **658** Greek dialogue strings, animal encyclopedia entries, UI labels, and puzzle instructions into structured JSON and text files in `docs/`.
 
 ---

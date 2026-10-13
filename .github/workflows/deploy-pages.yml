@@ -27,6 +27,21 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Download & Bundle Game Assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p web/data/games/forestia /tmp/game_download
+          echo "Downloading game data from release v1.0.0-preservation..."
+          gh release download v1.0.0-preservation --repo panlybero/forestia-greek-adventure --pattern "forestia_game_data.zip" -D /tmp/game_download
+          echo "Extracting game assets into web bundle..."
+          unzip -q /tmp/game_download/forestia_game_data.zip -d web/data/games/forestia
+          echo "Normalizing file system and case sensitivity..."
+          python3 tools/organize_iso_assets.py web/data/games/forestia web/data/games/forestia
+          echo "Generating HTTP filesystem indexes..."
+          python3 tools/build-make_http_index.py web/data
+          rm -rf /tmp/game_download
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

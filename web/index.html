@@ -196,9 +196,12 @@
     <a href="https://github.com/panlybero/forestia-greek-adventure/releases" target="_blank" rel="noopener">Desktop Versions</a>
     &bull;
     <a href="#" id="fullscreen-btn">Πλήρης Οθόνη</a>
+    &bull;
+    <span style="opacity:.6">build 20261013b</span>
   </footer>
 
   <script>
+    const BUILD = '20261013b'; // bump to bust browser caches of the engine/config
     window.resolveScummUrl = function(url) {
       var clean = url.startsWith('/') ? url.substring(1) : url;
       var base = window.location.href;
@@ -209,7 +212,9 @@
           base = base + '/';
         }
       }
-      return new URL(clean, base).href;
+      var out = new URL(clean, base);
+      if (clean === 'scummvm.ini') out.searchParams.set('v', BUILD);
+      return out.href;
     };
 
     const overlay = document.getElementById('overlay');
@@ -232,6 +237,9 @@
 
     var Module = {
       arguments: ['forestia-win-el'],
+      locateFile: function(path) {
+        return path + '?v=' + BUILD;
+      },
       preRun: [],
       postRun: [],
       print: function(text) {
@@ -285,7 +293,7 @@
       statusBox.innerText = 'Φόρτωση μηχανής ScummVM WebAssembly...';
 
       const script = document.createElement('script');
-      script.src = 'scummvm.js';
+      script.src = 'scummvm.js?v=' + BUILD;
       document.body.appendChild(script);
     });
   </script>

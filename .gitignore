@@ -1,0 +1,20 @@
+# Ignore compiled binaries and engine executables
+bin/scummvm*
+bin/*.exe
+bin/*.dwp
+*.o
+*.a
+
+# Ignore commercial game data dumps and disc images
+game_data/
+iso_contents/
+*.iso
+*.ISO
+*.bin
+*.cue
+
+# Ignore temporary logs and artifacts
+*.log
+__pycache__/
+*.pyc
+.DS_Store

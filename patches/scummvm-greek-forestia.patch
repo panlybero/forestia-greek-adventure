@@ -1,0 +1,182 @@
+diff --git a/common/enc-internal.h b/common/enc-internal.h
+index 73a7be0e..f5fade85 100644
+--- a/common/enc-internal.h
++++ b/common/enc-internal.h
+@@ -35,6 +35,7 @@ extern const uint16 kWindows1256ConversionTable[128];
+ extern const uint16 kWindows1257ConversionTable[128];
+ extern const uint16 kMacCentralEuropeConversionTable[128];
+ extern const uint16 kMacRomanConversionTable[128];
++extern const uint16 kMacGreekConversionTable[128];
+ extern const uint16 kLatin1ConversionTable[128];
+ extern const uint16 kLatin2ConversionTable[128];
+ extern const uint16 kISO5ConversionTable[128];
+diff --git a/common/encodings/singlebyte.cpp b/common/encodings/singlebyte.cpp
+index 7ce699b5..8e087a6d 100644
+--- a/common/encodings/singlebyte.cpp
++++ b/common/encodings/singlebyte.cpp
+@@ -185,6 +185,25 @@ const uint16 kMacRomanConversionTable[128] = {
+ 	0x00AF, 0x02D8, 0x02D9, 0x02DA, 0x00B8, 0x02DD, 0x02DB, 0x02C7
+ };
+ 
++const uint16 kMacGreekConversionTable[128] = {
++	0x00C4, 0x00B9, 0x00B2, 0x00C9, 0x00B3, 0x00D6, 0x00DC, 0x0385,
++	0x00E0, 0x00E2, 0x00E4, 0x0384, 0x00A8, 0x00E7, 0x00E9, 0x00E8,
++	0x00EA, 0x00EB, 0x00A3, 0x2122, 0x00EE, 0x00EF, 0x2022, 0x00BD,
++	0x2030, 0x00F4, 0x00F6, 0x00A6, 0x20AC, 0x00F9, 0x00FB, 0x00FC,
++	0x2020, 0x0393, 0x0394, 0x0398, 0x039B, 0x039E, 0x03A0, 0x00DF,
++	0x00AE, 0x00A9, 0x03A3, 0x03AA, 0x00A7, 0x2260, 0x00B0, 0x00B7,
++	0x0391, 0x00B1, 0x2264, 0x2265, 0x00A5, 0x0392, 0x0395, 0x0396,
++	0x0397, 0x0399, 0x039A, 0x039C, 0x03A6, 0x03AB, 0x03A8, 0x03A9,
++	0x03AC, 0x039D, 0x00AC, 0x039F, 0x03A1, 0x2248, 0x03A4, 0x00AB,
++	0x00BB, 0x2026, 0x00A0, 0x03A5, 0x03A7, 0x0386, 0x0388, 0x0153,
++	0x2013, 0x2015, 0x201C, 0x201D, 0x2018, 0x2019, 0x00F7, 0x0389,
++	0x038A, 0x038C, 0x038E, 0x03AD, 0x03AE, 0x03AF, 0x03CC, 0x038F,
++	0x03CD, 0x03B1, 0x03B2, 0x03C8, 0x03B4, 0x03B5, 0x03C6, 0x03B3,
++	0x03B7, 0x03B9, 0x03BE, 0x03BA, 0x03BB, 0x03BC, 0x03BD, 0x03BF,
++	0x03C0, 0x03CE, 0x03C1, 0x03C3, 0x03C4, 0x03B8, 0x03C9, 0x03C2,
++	0x03C7, 0x03C5, 0x03B6, 0x03CA, 0x03CB, 0x0390, 0x03B0, 0x00AD,
++};
++
+ const uint16 kLatin1ConversionTable[128] = {
+ 	0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087,
+ 	0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F,
+diff --git a/common/str-enc.cpp b/common/str-enc.cpp
+index 5327c8d9..9052017f 100644
+--- a/common/str-enc.cpp
++++ b/common/str-enc.cpp
+@@ -1001,6 +1001,8 @@ getConversionTable(CodePage page) {
+ 		return kMacCentralEuropeConversionTable;
+ 	case kMacRoman:
+ 		return kMacRomanConversionTable;
++	case kMacGreek:
++		return kMacGreekConversionTable;
+ 	case kISO8859_1:
+ 		return kLatin1ConversionTable;
+ 	case kISO8859_2:
+diff --git a/common/str-enc.h b/common/str-enc.h
+index 19c96fde..65a11a82 100644
+--- a/common/str-enc.h
++++ b/common/str-enc.h
+@@ -47,6 +47,7 @@ enum CodePage {
+ 	kISO8859_5,
+ 	kMacCentralEurope,
+ 	kMacRoman,
++	kMacGreek,
+ 	kDos850,
+ 	kDos862,
+ 	kDos866,
+diff --git a/engines/director/castmember/richtext.cpp b/engines/director/castmember/richtext.cpp
+index b29aa879..acf7ff36 100644
+--- a/engines/director/castmember/richtext.cpp
++++ b/engines/director/castmember/richtext.cpp
+@@ -141,7 +141,7 @@ void RichTextCastMember::load() {
+ 	if (_cast->_loadedRTE1s.contains(rte1id)) {
+ 		const RTE1 *rte1 =  _cast->_loadedRTE1s.getVal(rte1id);
+ 		if (!rte1->data.empty())
+-			_plainText = Common::U32String((const char *)&rte1->data[0], rte1->data.size(), g_director->getPlatformEncoding());
++			_plainText = Common::U32String((const char *)&rte1->data[0], rte1->data.size(), _cast->getFileEncoding());
+ 	} else {
+ 		warning("RichTextCastMember::load(): rte1tid %i isn't loaded, no plain text!", rte1id);
+ 	}
+diff --git a/engines/director/detection_tables.h b/engines/director/detection_tables.h
+index 0d644ff9..95ad90e7 100644
+--- a/engines/director/detection_tables.h
++++ b/engines/director/detection_tables.h
+@@ -8568,6 +8568,7 @@ static const DirectorGameDescription gameDescriptions[] = {
+ 	MACGAME1_l("forestia", "", "FORESTIA", "r:3c0d928e84acac2ee6739a4360e70fc6", 1032406, Common::FR_FRA, 602),
+ 	WINGAME1("forestia", "", "FORESTIA.EXE", "t:1e2b8807a12a817596db87b8052a393b", 1859350, 601),
+ 	WINGAME1_l("forestia", "", "Forestia.exe", "5e123b0ddb0f1193e1f840c50f24e382", 1521194, Common::FI_FIN, 650),
++	WINGAME1_l("forestia", "", "Forestia.exe", "t:0ee0e228692af7bfa8903e6235caac2a", 1529858, Common::EL_GRC, 650),
+ 
+ 	// Later releases are D8
+ 	WINGAME1_l("forestiajr", "", "FJPC/Forestia Junior.exe", "t:07a7028e8d3c13ac730eeda6b60eec6c", 1553190, Common::FR_FRA, 650),
+diff --git a/engines/director/movie.cpp b/engines/director/movie.cpp
+index f3d966f1..4b130316 100644
+--- a/engines/director/movie.cpp
++++ b/engines/director/movie.cpp
+@@ -218,10 +218,9 @@ void Movie::loadCastLibMapping(Common::SeekableReadStreamEndian &stream) {
+ 			maxMember = span >= 4 ? stream.readUint16() : 0;
+ 			libResourceId = span >= 8 ? stream.readUint32() : (span >= 6 ? stream.readUint16() : 1024);
+ 		}
+-		uint16 libId = i + 1;
+-		debugC(5, kDebugLoading, "Movie::loadCastLibMapping: name: %s, path: %s, minMember: %d, maxMember: %d, libResourceId: %d, libId: %d", utf8ToPrintable(name).c_str(), utf8ToPrintable(path).c_str(), minMember, maxMember, libResourceId, libId);
+ 		Common::SharedPtr<Archive> castArchive = _movieArchive;
+ 		bool isExternal = !path.empty();
++		uint16 libId = i + 1;
+ 		if (isExternal) {
+ 			Common::Path archivePath = findMoviePath(path);
+ 			castArchive = loadExternalCastFrom(archivePath);
+@@ -566,6 +565,9 @@ bool Movie::loadCastLibFrom(uint16 libId, Common::Path &filename) {
+ 
+ CastMember *Movie::getCastMember(CastMemberID memberID) {
+ 	CastMember *result = nullptr;
++	if (memberID.castLib == -1)
++		memberID.castLib = DEFAULT_CAST_LIB;
++
+ 	if (memberID.castLib == SHARED_CAST_LIB) {
+ 		if (_sharedCast)
+ 			result = _sharedCast->getCastMember(memberID.member);
+@@ -585,6 +587,9 @@ CastMember *Movie::getCastMember(CastMemberID memberID) {
+ }
+ 
+ Cast *Movie::getCast(CastMemberID memberID) {
++	if (memberID.castLib == -1)
++		memberID.castLib = DEFAULT_CAST_LIB;
++
+ 	if (memberID.castLib == SHARED_CAST_LIB)
+ 		return _sharedCast;
+ 
+@@ -759,6 +764,8 @@ CastMemberID Movie::getCastMemberIDByNameAndType(const Common::String &name, int
+ }
+ 
+ CastMemberInfo *Movie::getCastMemberInfo(CastMemberID memberID) {
++	if (memberID.castLib == -1)
++		memberID.castLib = DEFAULT_CAST_LIB;
+ 	CastMemberInfo *result = nullptr;
+ 	if (_casts.contains(memberID.castLib)) {
+ 		result = _casts.getVal(memberID.castLib)->getCastMemberInfo(memberID.member);
+@@ -777,6 +784,8 @@ bool Movie::isValidCastMember(CastMemberID memberID, CastType type) {
+ }
+ 
+ const Stxt *Movie::getStxt(CastMemberID memberID) {
++	if (memberID.castLib == -1)
++		memberID.castLib = DEFAULT_CAST_LIB;
+ 	const Stxt *result = nullptr;
+ 	if (_casts.contains(memberID.castLib)) {
+ 		result = _casts.getVal(memberID.castLib)->getStxt(memberID.member);
+@@ -809,6 +818,8 @@ LingoArchive *Movie::getSharedLingoArch() {
+ }
+ 
+ ScriptContext *Movie::getScriptContext(ScriptType type, CastMemberID id) {
++	if (id.castLib == -1)
++		id.castLib = DEFAULT_CAST_LIB;
+ 	ScriptContext *result = nullptr;
+ 	if (_casts.contains(id.castLib)) {
+ 		result = _casts.getVal(id.castLib)->_lingoArchive->getScriptContext(type, id.member);
+diff --git a/engines/director/util.cpp b/engines/director/util.cpp
+index c4fa2d0e..7cd9ad02 100644
+--- a/engines/director/util.cpp
++++ b/engines/director/util.cpp
+@@ -1366,6 +1366,10 @@ Common::CodePage getEncoding(Common::Platform platform, Common::Language languag
+ 	switch (language) {
+ 	case Common::JA_JPN:
+ 		return Common::kWindows932; // Shift JIS
++	case Common::EL_GRC:
++		return (platform == Common::kPlatformWindows)
++					? Common::kWindows1253
++					: Common::kMacGreek;
+ 	default:
+ 		break;
+ 	}
+@@ -1381,7 +1385,10 @@ Common::CodePage getEncoding(Common::Platform platform, Common::Language languag
+ }
+ 
+ Common::CodePage detectFontEncoding(Common::Platform platform, uint16 fontId) {
+-	return getEncoding(platform, g_director->_wm->_fontMan->getFontLanguage(fontId));
++	Common::Language lang = g_director->_wm->_fontMan->getFontLanguage(fontId);
++	if (lang == Common::UNK_LANG)
++		lang = g_director->getLanguage();
++	return getEncoding(platform, lang);
+ }
+ 
+ int charToNum(Common::u32char_type_t ch) {

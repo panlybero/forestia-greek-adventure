@@ -1,3 +1,51 @@
+diff --git a/backends/fs/emscripten/emscripten-fs-factory.cpp b/backends/fs/emscripten/emscripten-fs-factory.cpp
+index 6047b195..bf002a4c 100644
+--- a/backends/fs/emscripten/emscripten-fs-factory.cpp
++++ b/backends/fs/emscripten/emscripten-fs-factory.cpp
+@@ -46,13 +46,16 @@ EM_ASYNC_JS(void, _initSettings, (const char *pathPtr), {
+ 			FS.syncfs(true, (err) => err ? reject(err) : resolve());
+ 		});
+ 		
+-		// Check if settings file exists and download if needed
+-		if (!FS.analyzePath(settingsPath).exists) {
+-			const response = await fetch("scummvm.ini");
++		// Ensure settings file is fetched from current path and updated
++		try {
++			const iniUrl = globalThis['resolveScummUrl'] ? globalThis['resolveScummUrl']("scummvm.ini") : "scummvm.ini";
++			const response = await fetch(iniUrl);
+ 			if (response.ok) {
+ 				const text = await response.text();
+ 				FS.writeFile(settingsPath, text);
+ 			}
++		} catch (e) {
++			console.warn("Could not fetch default scummvm.ini", e);
+ 		}
+ 	} catch (err) {
+ 		console.error("Error initializing files:", err);
+diff --git a/backends/fs/emscripten/http-fs.cpp b/backends/fs/emscripten/http-fs.cpp
+index 7eecaf22..e0fc9c93 100644
+--- a/backends/fs/emscripten/http-fs.cpp
++++ b/backends/fs/emscripten/http-fs.cpp
+@@ -92,6 +92,9 @@ EM_ASYNC_JS(char *, _httpFsFetchIndex, (const char *url), {
+ 	globalThis['httpFsIndexCache'] = globalThis['httpFsIndexCache'] || {};
+ 	returnString = "";
+ 	url = UTF8ToString(url);
++	if (globalThis['resolveScummUrl']) {
++		url = globalThis['resolveScummUrl'](url);
++	}
+ 	console.debug("Downloading %s", url);
+ 	if (globalThis['httpFsIndexCache'][url]) {
+ 		console.debug("Cache hit for %s", url);
+@@ -116,6 +119,9 @@ EM_ASYNC_JS(char *, _httpFsFetchIndex, (const char *url), {
+ EM_ASYNC_JS(bool, _httpFsFetchFile, (const char *url, byte *dataPtr, int dataSize), {
+ 	returnBytes = new Uint8Array();
+ 	url = UTF8ToString(url);
++	if (globalThis['resolveScummUrl']) {
++		url = globalThis['resolveScummUrl'](url);
++	}
+ 	console.debug("Downloading %s", url);
+ 	try {
+ 		const response = await fetch(url);
 diff --git a/common/enc-internal.h b/common/enc-internal.h
 index 73a7be0e..f5fade85 100644
 --- a/common/enc-internal.h

@@ -12,6 +12,7 @@ iso_contents/
 *.ISO
 *.bin
 *.cue
+web/data/games/
 
 # Ignore temporary logs and artifacts
 *.log

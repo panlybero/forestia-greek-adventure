@@ -289,11 +289,11 @@
     &bull;
     <a href="#" id="fullscreen-btn">Πλήρης Οθόνη</a>
     &bull;
-    <span style="opacity:.6">build 20261014d</span>
+    <span style="opacity:.6">build 20261014e</span>
   </footer>
 
   <script>
-    const BUILD = '20261014d'; // bump to bust browser caches of the engine/config
+    const BUILD = '20261014e'; // bump to bust browser caches of the engine/config
     window.resolveScummUrl = function(url) {
       var clean = url.startsWith('/') ? url.substring(1) : url;
       var base = window.location.href;
@@ -571,6 +571,18 @@
       };
       ['pointerdown', 'mousedown', 'touchend', 'keydown'].forEach((ev) =>
         document.addEventListener(ev, resume, { capture: true, passive: true }));
+      // Browsers suspend (Safari: "interrupt") the context while the tab is in
+      // the background. The game waits on its sound channels, so until the
+      // audio runs again the score doesn't advance and the in-game hand cursor
+      // stops following the mouse. Resume as soon as the tab is back, without
+      // waiting for a click (allowed once the page has had a user gesture).
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') resume();
+      });
+      window.addEventListener('focus', resume);
+      window.addEventListener('pageshow', resume);
+      document.addEventListener('pointermove', resume, { capture: true, passive: true });
+      document.addEventListener('mousemove', resume, { capture: true, passive: true });
     }
 
     startBtn.addEventListener('click', function() {

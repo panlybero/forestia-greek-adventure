@@ -114,7 +114,7 @@ index 19c96fde..65a11a82 100644
  	kDos862,
  	kDos866,
 diff --git a/engines/director/castmember/bitmap.cpp b/engines/director/castmember/bitmap.cpp
-index 6c928ccb..0cb93456 100644
+index 6c928ccb..110f45ac 100644
 --- a/engines/director/castmember/bitmap.cpp
 +++ b/engines/director/castmember/bitmap.cpp
 @@ -93,10 +93,12 @@ BitmapCastMember::BitmapCastMember(Cast *cast, uint16 castId, Common::SeekableRe
@@ -166,7 +166,36 @@ index 6c928ccb..0cb93456 100644
  			}
  		} else {
  			_bitsPerPixel = 1;
-@@ -425,16 +431,23 @@ Graphics::Surface *BitmapCastMember::getDitherImg() {
+@@ -411,6 +417,28 @@ Graphics::MacWidget *BitmapCastMember::createWidget(Common::Rect &bbox, Channel
+ 	return widget;
+ }
+ 
++// True colour (Forestia): the screen palette doesn't change how a paletted
++// bitmap looks, only an active puppet palette does (the game shows e.g. the
++// map, tagged with P.MATIN, through puppetPalette "P.PLAN"). The puppet palette
++// is treated as global, as it may have been set from another window's
++// context. Returns the puppet palette, or a null ID if none is active.
++static CastMemberID getTrueColorPuppetPalette() {
++	if (g_director->_lastPuppetPalette.isNull())
++		return CastMemberID();
++	bool active = false;
++	Movie *movie = g_director->getCurrentMovie();
++	if (movie && movie->getScore() && movie->getScore()->_puppetPalette)
++		active = true;
++	Window *stage = g_director->getStage();
++	if (stage && stage->getCurrentMovie() && stage->getCurrentMovie()->getScore() &&
++			stage->getCurrentMovie()->getScore()->_puppetPalette)
++		active = true;
++	if (!active)
++		return CastMemberID();
++	CastMemberID id = g_director->resolvePaletteId(g_director->_lastPuppetPalette);
++	return g_director->hasPalette(id) ? id : CastMemberID();
++}
++
+ Graphics::Surface *BitmapCastMember::getDitherImg() {
+ 	if (!_picture->_surface.getPixels())
+         return nullptr;
+@@ -425,16 +453,38 @@ Graphics::Surface *BitmapCastMember::getDitherImg() {
  	CastMemberID currentPaletteId = score->getCurrentPalette();
  	if (currentPaletteId.isNull())
  		currentPaletteId = movie->_defaultPalette;
@@ -191,10 +220,34 @@ index 6c928ccb..0cb93456 100644
 +		if (castPaletteId.isNull() || castPaletteId.member <= 0)
 +			castPaletteId = currentPaletteId;
 +	}
++
++	// See getTrueColorPuppetPalette(). The dithering key becomes the puppet
++	// palette or the bitmap's own palette, so that the score palette flipping
++	// between windows doesn't force a re-dither of every bitmap each frame.
++	bool trueColorPuppet = false;
++	if (targetBpp != 1 && g_director->_paletteIndependentColors) {
++		CastMemberID puppet = getTrueColorPuppetPalette();
++		if (!puppet.isNull()) {
++			currentPaletteId = puppet;
++			currentPalette = g_director->getPalette(puppet);
++			trueColorPuppet = true;
++		} else {
++			currentPaletteId = castPaletteId;
++		}
++	}
  
  	// Check if the palette is in the middle of a color fade event
  	bool isColorCycling = score->isPaletteColorCycling();
-@@ -530,20 +543,26 @@ bool BitmapCastMember::isModified() {
+@@ -473,7 +523,7 @@ Graphics::Surface *BitmapCastMember::getDitherImg() {
+ 		// Only redither 8-bit images in 8-bit mode if we have the remap palette flag set, or it is external
+ 		if (targetBpp == 1 && !movie->_remapPalettesWhenNeeded && !_external)
+ 			break;
+-		if (targetBpp != 1 && score->_puppetPalette && !_external) {
++		if (targetBpp != 1 && (score->_puppetPalette || trueColorPuppet) && !_external) {
+ 			// we're in true colour mode, rendering a paletted image, and the puppet palette has been set
+ 			// use the score palette
+ 			const byte *palPtr = currentPalette->palette;
+@@ -530,20 +580,31 @@ bool BitmapCastMember::isModified() {
  	// will dither the image so that it fits within the current palette.
  	// When the score palette changes, we need to flag that the widget needs
  	// to be recreated.
@@ -222,6 +275,11 @@ index 6c928ccb..0cb93456 100644
 +				castPaletteId = movie->_defaultPalette;
 +			castPaletteId = g_director->resolvePaletteId(castPaletteId);
 +		}
++
++		if (g_director->_wm->_pixelformat.bytesPerPixel != 1 && g_director->_paletteIndependentColors) {
++			CastMemberID puppet = getTrueColorPuppetPalette();
++			currentPaletteId = puppet.isNull() ? castPaletteId : puppet;
++		}
  
  		return !_ditheredTargetClut.isNull() && _ditheredTargetClut != currentPaletteId;
  	}
@@ -246,10 +304,10 @@ index 4e8445f2..d945c932 100644
  
  		debugCN(5, kDebugImages, "FilmLoopCastMember::getSubChannels(): sprite: %d - cast: %s, orig: %d,%d %dx%d",
 diff --git a/engines/director/castmember/richtext.cpp b/engines/director/castmember/richtext.cpp
-index b29aa879..6a20bbe1 100644
+index b29aa879..dd00f7fb 100644
 --- a/engines/director/castmember/richtext.cpp
 +++ b/engines/director/castmember/richtext.cpp
-@@ -103,6 +103,19 @@ RichTextCastMember::~RichTextCastMember() {
+@@ -103,6 +103,20 @@ RichTextCastMember::~RichTextCastMember() {
  
  	if (_pictureWithBg)
  		delete _pictureWithBg;
@@ -265,11 +323,12 @@ index b29aa879..6a20bbe1 100644
 +	// underneath. Rendering it against its background colour and then keying
 +	// that colour out leaves a halo of half-blended pixels around the glyphs.
 +	return g_director->_wm->_pixelformat.bytesPerPixel > 1 &&
-+		(ink == kInkTypeBackgndTrans || ink == kInkTypeMatte);
++		(ink == kInkTypeBackgndTrans || ink == kInkTypeMatte || ink == kInkTypeBlend ||
++		 ink == kInkTypeTransparent);
  }
  
  void RichTextCastMember::load() {
-@@ -141,7 +154,7 @@ void RichTextCastMember::load() {
+@@ -141,7 +155,7 @@ void RichTextCastMember::load() {
  	if (_cast->_loadedRTE1s.contains(rte1id)) {
  		const RTE1 *rte1 =  _cast->_loadedRTE1s.getVal(rte1id);
  		if (!rte1->data.empty())
@@ -278,7 +337,7 @@ index b29aa879..6a20bbe1 100644
  	} else {
  		warning("RichTextCastMember::load(): rte1tid %i isn't loaded, no plain text!", rte1id);
  	}
-@@ -187,8 +200,11 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
+@@ -187,8 +201,11 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
  
  	Graphics::Surface *dithered = nullptr;
  	Picture *src = _pictureWithBg;
@@ -291,7 +350,7 @@ index b29aa879..6a20bbe1 100644
  		src = _picture;
  
  	if (dstBpp == 1) {
-@@ -209,6 +225,36 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
+@@ -209,6 +226,36 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
  		delete dithered;
  	}
  
@@ -411,7 +470,7 @@ index 7857289f..00a5f72f 100644
  	} else {
  		_pixelformat = Graphics::PixelFormat::createFormatCLUT8();
 diff --git a/engines/director/director.h b/engines/director/director.h
-index 82b393d4..5a0dfbea 100644
+index 82b393d4..d1bce3bd 100644
 --- a/engines/director/director.h
 +++ b/engines/director/director.h
 @@ -205,6 +205,7 @@ public:
@@ -422,17 +481,18 @@ index 82b393d4..5a0dfbea 100644
  	bool hasPalette(CastMemberID id);
  	void loadDefaultPalettes();
  
-@@ -319,6 +320,9 @@ public:
- 
- private:
- 	byte _currentPalette[768];
+@@ -301,6 +302,10 @@ public:
+ 	uint16 _wmWidth;
+ 	uint16 _wmHeight;
+ 	CastMemberID _lastPalette;
 +	// Map palette indices through the movie's default palette instead of the
-+	// currently active one (true colour, see transformColor()).
++	// currently active one (true colour, see transformColor()
++	// and Score::renderPrePaletteCycle()).
 +	bool _paletteIndependentColors = false;
- 	uint16 _currentPaletteLength;
- 	bool _gammaCorrection;
- 	Lingo *_lingo;
-@@ -366,6 +370,8 @@ struct DirectorPlotData {
+ 	CastMemberID _lastPuppetPalette;
+ 
+ 	// used for quirks
+@@ -366,6 +371,8 @@ struct DirectorPlotData {
  
  	Graphics::ManagedSurface *srf = nullptr;
  	Graphics::ManagedSurface *srfMask = nullptr;
@@ -441,7 +501,7 @@ index 82b393d4..5a0dfbea 100644
  	MacShape *ms = nullptr;
  
  	SpriteType sprite = kInactiveSprite;
-@@ -384,6 +390,7 @@ struct DirectorPlotData {
+@@ -384,6 +391,7 @@ struct DirectorPlotData {
  	uint32 preprocessColor(uint32 src);
  	void inkBlitShape(Common::Rect &srcRect);
  	void inkBlitSurface(Common::Rect &srcRect, const Graphics::Surface *mask);
@@ -754,6 +814,29 @@ index 3a9c0d53..66140638 100644
  	}
  	Graphics::ManagedSurface *result = new Graphics::ManagedSurface();
  	result->create((int16)_width, (int16)_height, pf);
+diff --git a/engines/director/score.cpp b/engines/director/score.cpp
+index a7641db0..6cf8e73a 100644
+--- a/engines/director/score.cpp
++++ b/engines/director/score.cpp
+@@ -1081,6 +1081,18 @@ bool Score::renderPrePaletteCycle(RenderMode mode) {
+ 				return false;
+ 			}
+ 
++			// At thousands/millions of colours Director does not animate a
++			// switch between two palettes; it only matters for 8-bit displays.
++			// In ScummVM the fade loop blocks for up to several seconds, and
++			// because _lastPalette is shared between windows, a movie in a
++			// window (e.g. Forestia's help screen next to the stage) with a
++			// different palette retriggers it on every frame, which freezes
++			// the game. Switch immediately instead.
++			if (_vm->_paletteIndependentColors) {
++				_vm->setPalette(currentPalette);
++				return false;
++			}
++
+ 			// For fade palette transitions, the whole fade happens with
+ 			// the previous frame's layout.
+ 			debugC(2, kDebugImages, "Score::renderPrePaletteCycle(): fading palette to %s over %d frames", currentPalette.asString().c_str(), fadeFrames);
 diff --git a/engines/director/util.cpp b/engines/director/util.cpp
 index c4fa2d0e..78e877e3 100644
 --- a/engines/director/util.cpp

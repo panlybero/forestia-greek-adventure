@@ -2,7 +2,7 @@
 
 These are working notes on the game, the Macromedia Director engine it was built with, the ScummVM changes needed to run it, and the native and WebAssembly port in this repository. They are meant for whoever picks this up next, including future us.
 
-> **Status (Oct 2026):** the game runs natively (Linux build in `bin/`) and in the browser on desktop and mobile at <https://plympe.com/forestia-greek-adventure/>. Verified so far: intro sequence, sound, correct colours, the main menu, the "new adventure" notice board, and typing a player name. A full play-through has **not** been done yet, so expect engine bugs further in.
+> **Status (Oct 2026):** the game runs natively (Linux build in `bin/`) and in the browser on desktop and mobile at <https://plympe.com/forestia-greek-adventure/>. Verified so far: intro sequence, sound, correct colours, the main menu, the "new adventure" notice board, typing a player name, the welcome screen, Sam's introduction, the help screen, walking in the first forest scene, and the map. A full play-through has **not** been done yet, so expect engine bugs further in.
 
 Contents:
 
@@ -59,7 +59,7 @@ The main movie is `DATA/FRST.Dxr`. The other movies are scenes and mini-games (`
    - `GaccesF`
 2. It then runs `go to movie "D:\DATA\FRST"`. ScummVM maps the drive path onto the game directory. In the logs this shows as `Window::setNextMovie: 'D:\DATA\FRST' -> 'data/frst.dxr'`.
 3. `FRST.Dxr` plays the publisher logos (Livani, which is silent; LaserMedia, which plays `LASERMED.AIF`; and Daddy Oak), then the floating-island title screen, then the signpost main menu.
-   - **The first ~40 s have no sound by design.** The first audible sound is `LASERMED.AIF`.
+   - The Livani logo is silent; the first audible sound is `LASERMED.AIF`. (Earlier builds took ~40 s to get there because of the blocking palette fades fixed in §3.13.)
    - The same logic exists in the decompiled `STARTERPC` scripts; see `reverse_engineering_report.md`.
 
 ### 1.3 `FRST.Dxr` cast libraries
@@ -236,7 +236,7 @@ These are the Director features this game relies on, and therefore where ScummVM
   - Earlier, `RichTextCastMember::createWidget()` had been changed to always use the version pre-blended against the member's white background. For `BackgndTrans` ink, exact white was then keyed out, but the half-blended edge pixels stayed.
   - The plain version (`_picture`) can't be used directly, because the widget surface has no alpha. Its transparent pixels become solid text colour, which caused the earlier "black boxes" over the age buttons.
 - **Fix:**
-  - For `BackgndTrans`/`Matte` inks in true colour, the widget is built from the plain glyph colours, and an 8-bit coverage mask is kept (`RichTextCastMember::_alphaMask`, scaled like the widget).
+  - For `BackgndTrans`/`Matte`/`Blend`/`Transparent` inks in true colour (`Blend` is used by the intro title "Η μεγάλη περιπέτεια", which showed in a white box), the widget is built from the plain glyph colours, and an 8-bit coverage mask is kept (`RichTextCastMember::_alphaMask`, scaled like the widget).
   - `Channel::getPlotData()` passes it as `DirectorPlotData::srfAlpha`.
   - The new `DirectorPlotData::inkBlitAlpha()` blends source over destination per pixel. It also respects a sprite blend amount.
   - 8-bit mode and `Copy` ink keep the old path.
@@ -260,6 +260,33 @@ These are the Director features this game relies on, and therefore where ScummVM
 - **Fix:** `FilmLoopCastMember::getSubChannels()` (`castmember/filmloop.cpp`) rewrites castLib −1 to the film loop's own `_castLibID` before resolving the member.
 
 ---
+
+### 3.13 Palette fades froze the game (help screen after Sam's introduction)
+
+- **Symptom:** after Sam's introduction the game seemed frozen when it should hand over control. It was actually showing the help screen at about **one frame every 10 seconds**, so clicks were almost never handled. The intro also took far longer than needed.
+- **Root cause:**
+  - `Score::renderPrePaletteCycle()` performs a "normal" palette transition as a **blocking loop** (draw, delay, repeat) of up to several seconds.
+  - Most of the game runs with a second movie in a window (`CRTL.Dxr`) next to the stage. The two scores use different palettes (System Mac from the frame vs. the cached System Win), and `DirectorEngine::_lastPalette` is shared, so each score sees a palette change on **every frame** and starts the fade again.
+  - A gdb sample showed all the time spent in `renderPrePaletteCycle → DirectorEngine::draw`.
+- **Fix:** in `score.cpp`, when `_paletteIndependentColors` is set (Forestia, true colour), a normal palette transition switches immediately instead of fading. At thousands of colours Director doesn't animate palette switches anyway. Fades to black/white are unchanged.
+- **Follow-up:** making `_lastPalette` per window would be the proper upstream fix.
+
+### 3.14 Paletted bitmaps in true colour: puppet palette is global, no re-dither churn
+
+- **Symptom:** the map (`plan`, member 5 of the `MEC` cast, tagged with palette P.MATIN, member 509) showed with a pink parchment instead of beige.
+- **Root cause:**
+  - The game shows the map with `puppetPalette "P.PLAN"` (member 519). Upstream already renders paletted bitmaps through the puppet palette in true colour, but only if the **current movie's** score has the puppet flag. The flag is per score, so whether it applies depends on which window's context the handler ran in.
+  - `BitmapCastMember::isModified()` compared the dithering key with the score palette. Because of §3.13 that changes every frame, so every bitmap was re-dithered every frame (a large CPU cost, especially in the browser).
+- **Fix (`castmember/bitmap.cpp`, Forestia/true colour only):**
+  - New `getTrueColorPuppetPalette()` returns the global `_lastPuppetPalette` while the stage's or the current movie's score has a puppet palette set.
+  - The dithering key (`_ditheredTargetClut`) is the puppet palette if one is active, otherwise the bitmap's own palette, in both `getDitherImg()` and `isModified()`.
+- Verified by showing `F_231` frame `PLAN` with and without `puppetPalette "P.PLAN"` (debugger REPL).
+
+### 3.15 Known gap: speech cue points (`isPastCuePoint`, `sound(n)`)
+
+- Sam's and Papychêne's lip-sync uses the Shared handler `wait`, which loops on a labelled frame until `IsPastCuePoint(sound(4), label)` while `soundBusy(4)`.
+- ScummVM has no `sound(n)` function form (the call fails with "Call to undefined handler 'sound'"), and `isPastCuePoint` is a stub. The failing call aborts the handler, so the animation simply plays on without waiting for the speech. The game progresses, but lip-sync may drift.
+- Implementing this needs AIFF `MARK` chunk parsing and cue tracking for `sound playFile` channels. It must be done carefully: a stub that returns 0 would turn the handler into an endless loop.
 
 ## 4. The web port
 
@@ -285,7 +312,8 @@ The live site is `web/` served from GitHub Pages, with the game data added at de
 
 **Audio unlock:**
 - `unlockAudio()` creates the `AudioContext` *synchronously inside the Play click*, plays a 1-sample silent buffer, and assigns it to `Module.SDL3.audioContext`. SDL3 reuses an existing context.
-- It keeps resuming on later pointer/touch/key events.
+- It keeps resuming on later pointer/touch/key events, and also when the tab becomes visible again (`visibilitychange`, `focus`, `pageshow`) or the mouse moves.
+- Why this matters: browsers suspend the context in background tabs. The game waits on its sound channels, so until audio runs again the score doesn't advance. The in-game hand cursor then stopped following the mouse after a tab switch until the next click.
 - Without this, Safari/iOS keeps the context suspended. SDL3 only auto-resumes on browsers without `navigator.userActivation`.
 
 **Canvas size sync:**
@@ -443,6 +471,8 @@ Use `--debugflags=<list> -d <level>`; on the web, add them to `Module.arguments`
 - [ ] Confirm what castLib 0 means for D5/D6 bitmap cluts, then upstream §3.2.
 - [ ] Check against a reference capture of the original whether the notice board's "Επιλογές" bar really is black (§3.6).
 - [ ] Upstream the RTE2 end-of-line fix (§3.11) and the film loop castLib −1 fix (§3.12). Both are game-independent.
+- [ ] Implement speech cue points (§3.15) for proper lip-sync.
+- [ ] Make `_lastPalette` per window instead of the §3.13 workaround.
 - [ ] Upstream the MacGreek code page, the Greek detection entry and the castLib −1 fix.
 - [ ] Do a full play-through: mini-games, album, saving and loading, quitting, end credits. Check the unimplemented Xtras (`swastrm`/`swadcmpr` Shockwave Audio, `MIX32`, `SCRNXTRA`) along the way.
 - [ ] Find out how save games are stored and whether they persist in the browser across sessions (IndexedDB).
@@ -469,4 +499,5 @@ Use `--debugflags=<list> -d <level>`; on the web, add them to `Module.arguments`
 | 2026-10-13 | `cd5b51a` | Mobile layout (fullscreen 4:3, canvas size sync), ⌨ on-screen keyboard, ⛶ fullscreen, SDL3 key-handler de-dupe (6x typing), 16bpp screen format (stale signpost, label colours), PWA manifest |
 | 2026-10-14 | `b31e50b` | Shape sprite BackgndTrans fill skip (fixes solid button overlays and black bars), bitmap clutId == 0 default palette resolution (fixes forest backdrop palette) |
 | 2026-10-14 | `b3ad106` | Lingo builtin `the result` preservation and 2-argument `addAt()` support (fixes starting new adventure from age selection menu) |
-| 2026-10-14 | | Text/visual pass: reverted the §3.6 fill skip; colour indices resolved against the movie palette (§3.9); alpha-blended rich text (§3.10); RTE2 end-of-line decode fix (§3.11); film loop castLib −1 (§3.12, hand cursor). Web `BUILD` 20261014d |
+| 2026-10-14 | `e155c70` | Text/visual pass: reverted the §3.6 fill skip; colour indices resolved against the movie palette (§3.9); alpha-blended rich text (§3.10); RTE2 end-of-line decode fix (§3.11); film loop castLib −1 (§3.12, hand cursor). Web `BUILD` 20261014d |
+| 2026-10-14 | | Freeze after Sam's introduction (blocking palette fades, §3.13); map colours / bitmap re-dither churn (§3.14); intro title in a white box (Blend ink, §3.10); audio resumed on tab return (§4.1). Web `BUILD` 20261014e |

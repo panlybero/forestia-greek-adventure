@@ -179,6 +179,20 @@ These are the Director features this game relies on, and therefore where ScummVM
 - **`Clash in case for match of pattern "data"` warnings and "name clash" spam:** these come from the lower/upper-case symlinks created by `organize_iso_assets.py`. ScummVM is case-insensitive anyway, so the symlinks are unnecessary.
 - **`Movie::getCastMember: member 140..143 NOT FOUND in castLib 1`:** appears during boot and seems harmless.
 
+### 3.6 Shape Sprite solid fill skip on BackgndTrans ink
+
+- **Symptom:** Solid colored boxes covering the main menu buttons ("Έξοδος", "Επιλογές", "Βοήθεια"), solid black bar across the notice board over "Επιλογές", and solid black boxes covering the age buttons.
+- **Root cause:** Shape sprites (`kRectangleSprite`, `kRoundedRectangleSprite`, `kOvalSprite`) with `kInkTypeBackgndTrans` were calling `drawFilledRect1()`, `drawRoundRect1()`, and `drawEllipse()` with `ms->foreColor` unconditionally before drawing the stroke outline. Because the interior was filled with `foreColor` (which differed from `backColor`), `kInkTypeBackgndTrans` treated the fill pixels as opaque.
+- **Fix:** In `engines/director/graphics.cpp` (`DirectorPlotData::inkBlitShape`), only draw the interior fill when `ink != kInkTypeBackgndTrans`.
+
+### 3.7 BitmapCastMember default palette fallback (`clutId == 0`)
+
+- **Symptom:** Bitmaps without explicit custom palettes (`clutId == 0`), such as the main menu forest backdrop (`FORET`, member 132 of castLib 8), were decoded against `macPalette` instead of their movie's default palette (`P.MIDI`, member 501 of castLib 2), causing cyan and magenta psychedelic noise.
+- **Root cause:**
+  1. `BitmapCastMember` parsed `clutId <= 0` as `CastMemberID(clutId - 1, -1)`. For `clutId == 0`, this mapped to `kClutSystemMac` (`CastMemberID(-1, -1)`).
+  2. In `BitmapCastMember::getDitherImg()`, when `castPaletteId` was null or `<= 0`, it fell back to `currentPaletteId`. Because previous score frames set palettes during transitions or fades, `currentPaletteId` pointed to Mac System palette instead of the movie's default palette.
+- **Fix:** In `engines/director/castmember/bitmap.cpp`, map `clutId == 0` to `CastMemberID(0, 0)`. In `getDitherImg()` and `isModified()`, when `castPaletteId` is null or `member <= 0`, fall back to `_cast->_defaultPalette` (if `member > 0`) or `movie->_defaultPalette` before falling back to `currentPaletteId`.
+
 ---
 
 ## 4. The web port
@@ -385,3 +399,4 @@ Use `--debugflags=<list> -d <level>`; on the web, add them to `Module.arguments`
 | 2026-10-13 | `91aa7e4`…`c6373b8` | Initial preservation: MacGreek, detection, castLib −1 fix, CD-check bypass, string extraction; WebAssembly player, Pages workflow, splash screen, auto-boot, cache-busting |
 | 2026-10-13 | `eb42670` | Palette castLib 0 resolution (fixes blown-out colours); audio unlocked in the Play click; new screenshots |
 | 2026-10-13 | `cd5b51a` | Mobile layout (fullscreen 4:3, canvas size sync), ⌨ on-screen keyboard, ⛶ fullscreen, SDL3 key-handler de-dupe (6x typing), 16bpp screen format (stale signpost, label colours), PWA manifest |
+| 2026-10-14 | | Shape sprite BackgndTrans fill skip (fixes solid button overlays and black bars), bitmap clutId == 0 default palette resolution (fixes forest backdrop palette) |

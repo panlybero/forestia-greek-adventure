@@ -114,10 +114,59 @@ index 19c96fde..65a11a82 100644
  	kDos862,
  	kDos866,
 diff --git a/engines/director/castmember/bitmap.cpp b/engines/director/castmember/bitmap.cpp
-index 6c928ccb..759ef70f 100644
+index 6c928ccb..0cb93456 100644
 --- a/engines/director/castmember/bitmap.cpp
 +++ b/engines/director/castmember/bitmap.cpp
-@@ -425,12 +425,13 @@ Graphics::Surface *BitmapCastMember::getDitherImg() {
+@@ -93,10 +93,12 @@ BitmapCastMember::BitmapCastMember(Cast *cast, uint16 castId, Common::SeekableRe
+ 			_bitsPerPixel = stream.readUint16();
+ 			int clutId = stream.readSint16();
+ 
+-			if (clutId <= 0) // builtin palette
++			if (clutId < 0) // builtin palette
+ 				_clut = CastMemberID(clutId - 1, -1);
+-			else
++			else if (clutId > 0)
+ 				_clut = CastMemberID(clutId, DEFAULT_CAST_LIB);
++			else
++				_clut = CastMemberID(0, 0);
+ 		} else {
+ 			_bitsPerPixel = 1;
+ 			_clut = CastMemberID(kClutSystemMac, -1);
+@@ -140,13 +142,15 @@ BitmapCastMember::BitmapCastMember(Cast *cast, uint16 castId, Common::SeekableRe
+ 			}
+ 			int clutId = stream.readSint16();
+ 
+-			if (clutId <= 0) // builtin palette
++			if (clutId < 0) // builtin palette
+ 				_clut = CastMemberID(clutId - 1, -1);
+ 			else if (clutId > 0) {
+ 				if (clutCastLib == -1) {
+ 					clutCastLib = _cast->_castLibID;
+ 				}
+ 				_clut = CastMemberID(clutId, clutCastLib);
++			} else {
++				_clut = CastMemberID(0, 0);
+ 			}
+ 			if (stream.pos() < stream.size()) {
+ 				// castSize > 26 bytes on D4, > 28 bytes on D5
+@@ -211,13 +215,15 @@ BitmapCastMember::BitmapCastMember(Cast *cast, uint16 castId, Common::SeekableRe
+ 			}
+ 			int clutId = stream.readSint16();
+ 
+-			if (clutId <= 0) // builtin palette
++			if (clutId < 0) // builtin palette
+ 				_clut = CastMemberID(clutId - 1, -1);
+ 			else if (clutId > 0) {
+ 				if (clutCastLib == -1) {
+ 					clutCastLib = _cast->_castLibID;
+ 				}
+ 				_clut = CastMemberID(clutId, clutCastLib);
++			} else {
++				_clut = CastMemberID(0, 0);
+ 			}
+ 		} else {
+ 			_bitsPerPixel = 1;
+@@ -425,16 +431,23 @@ Graphics::Surface *BitmapCastMember::getDitherImg() {
  	CastMemberID currentPaletteId = score->getCurrentPalette();
  	if (currentPaletteId.isNull())
  		currentPaletteId = movie->_defaultPalette;
@@ -130,9 +179,29 @@ index 6c928ccb..759ef70f 100644
 -	CastMemberID castPaletteId = _clut;
 +	CastMemberID castPaletteId = g_director->resolvePaletteId(_clut);
  	// It is possible for Director to have saved an invalid ID in _clut;
- 	// if this is the case, do no dithering.
- 	if (castPaletteId.isNull())
-@@ -536,6 +537,7 @@ bool BitmapCastMember::isModified() {
+-	// if this is the case, do no dithering.
+-	if (castPaletteId.isNull())
+-		castPaletteId = currentPaletteId;
++	if (castPaletteId.isNull() || castPaletteId.member <= 0) {
++		if (_cast && _cast->_defaultPalette.member > 0)
++			castPaletteId = _cast->_defaultPalette;
++		else if (movie->_defaultPalette.member > 0)
++			castPaletteId = movie->_defaultPalette;
++		castPaletteId = g_director->resolvePaletteId(castPaletteId);
++		if (castPaletteId.isNull() || castPaletteId.member <= 0)
++			castPaletteId = currentPaletteId;
++	}
+ 
+ 	// Check if the palette is in the middle of a color fade event
+ 	bool isColorCycling = score->isPaletteColorCycling();
+@@ -530,20 +543,26 @@ bool BitmapCastMember::isModified() {
+ 	// will dither the image so that it fits within the current palette.
+ 	// When the score palette changes, we need to flag that the widget needs
+ 	// to be recreated.
+-	if (!_clut.isNull()) {
++	if (_bitsPerPixel <= 8) {
+ 		Movie *movie = g_director->getCurrentMovie();
+ 		Score *score = movie->getScore();
  		CastMemberID currentPaletteId = score->getCurrentPalette();
  		if (currentPaletteId.isNull())
  			currentPaletteId = movie->_defaultPalette;
@@ -140,11 +209,35 @@ index 6c928ccb..759ef70f 100644
  		PaletteV4 *currentPalette = g_director->getPalette(currentPaletteId);
  		if (!currentPalette) {
  			currentPaletteId = CastMemberID(kClutSystemMac, -1);
+ 			currentPalette = g_director->getPalette(currentPaletteId);
+ 		}
+-		CastMemberID castPaletteId = _clut;
+-		if (castPaletteId.isNull())
+-			castPaletteId = movie->_defaultPalette;
++		CastMemberID castPaletteId = g_director->resolvePaletteId(_clut);
++		if (castPaletteId.isNull() || castPaletteId.member <= 0) {
++			if (_cast && _cast->_defaultPalette.member > 0)
++				castPaletteId = _cast->_defaultPalette;
++			else if (movie->_defaultPalette.member > 0)
++				castPaletteId = movie->_defaultPalette;
++			castPaletteId = g_director->resolvePaletteId(castPaletteId);
++		}
+ 
+ 		return !_ditheredTargetClut.isNull() && _ditheredTargetClut != currentPaletteId;
+ 	}
 diff --git a/engines/director/castmember/richtext.cpp b/engines/director/castmember/richtext.cpp
-index b29aa879..acf7ff36 100644
+index b29aa879..8638eb27 100644
 --- a/engines/director/castmember/richtext.cpp
 +++ b/engines/director/castmember/richtext.cpp
-@@ -141,7 +141,7 @@ void RichTextCastMember::load() {
+@@ -33,6 +33,7 @@
+ #include "director/window.h"
+ #include "director/castmember/richtext.h"
+ #include "director/lingo/lingo-the.h"
++#include "image/bmp.h"
+ 
+ namespace Director {
+ 
+@@ -141,7 +142,7 @@ void RichTextCastMember::load() {
  	if (_cast->_loadedRTE1s.contains(rte1id)) {
  		const RTE1 *rte1 =  _cast->_loadedRTE1s.getVal(rte1id);
  		if (!rte1->data.empty())
@@ -153,6 +246,34 @@ index b29aa879..acf7ff36 100644
  	} else {
  		warning("RichTextCastMember::load(): rte1tid %i isn't loaded, no plain text!", rte1id);
  	}
+@@ -188,8 +189,8 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
+ 	Graphics::Surface *dithered = nullptr;
+ 	Picture *src = _pictureWithBg;
+ 
+-	if (channel->_sprite->_ink == kInkTypeBackgndTrans)
+-		src = _picture;
++	// if (channel->_sprite->_ink == kInkTypeBackgndTrans)
++	// 	src = _picture;
+ 
+ 	if (dstBpp == 1) {
+ 		dithered = src->_surface.convertTo(g_director->_wm->_pixelformat, nullptr, 0, g_director->_wm->getPalette(), g_director->_wm->getPaletteSize());
+@@ -204,6 +205,16 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
+ 		g_director->_wm->getPalette()
+ 	);
+ 
++	if (_castId == 23) {
++		Common::DumpFile df1, df2;
++		df1.open(Common::Path("/tmp/src_23.bmp"), true);
++		Image::writeBMP(df1, src->_surface);
++		df1.close();
++		df2.open(Common::Path("/tmp/widget_23.bmp"), true);
++		Image::writeBMP(df2, *widget->getSurface()->surfacePtr());
++		df2.close();
++	}
++
+ 	if (dithered) {
+ 		dithered->free();
+ 		delete dithered;
 diff --git a/engines/director/detection_tables.h b/engines/director/detection_tables.h
 index 0d644ff9..95ad90e7 100644
 --- a/engines/director/detection_tables.h
@@ -203,7 +324,7 @@ index 82b393d4..036db645 100644
  	void loadDefaultPalettes();
  
 diff --git a/engines/director/graphics.cpp b/engines/director/graphics.cpp
-index 178f0467..ecee9f0b 100644
+index 178f0467..619ed217 100644
 --- a/engines/director/graphics.cpp
 +++ b/engines/director/graphics.cpp
 @@ -138,13 +138,37 @@ void DirectorEngine::loadDefaultPalettes() {
@@ -258,11 +379,63 @@ index 178f0467..ecee9f0b 100644
  
  	return _loadedPalettes.contains(id);
  }
+@@ -685,8 +707,10 @@ void DirectorPlotData::inkBlitShape(Common::Rect &srcRect) {
+ 
+ 	switch (ms->spriteType) {
+ 	case kRectangleSprite:
+-		ms->pd = &plotFill;
+-		primitives->drawFilledRect1(fillAreaRect, ms->foreColor, this);
++		if (ink != kInkTypeBackgndTrans) {
++			ms->pd = &plotFill;
++			primitives->drawFilledRect1(fillAreaRect, ms->foreColor, this);
++		}
+ 		// fall through
+ 	case kOutlinedRectangleSprite:
+ 		// if we have lineSize <= 0, means we are not drawing anything. so we may return directly.
+@@ -700,8 +724,10 @@ void DirectorPlotData::inkBlitShape(Common::Rect &srcRect) {
+ 		primitives->drawRect1(strokeRect, ms->foreColor, this);
+ 		break;
+ 	case kRoundedRectangleSprite:
+-		ms->pd = &plotFill;
+-		primitives->drawRoundRect1(fillAreaRect, 12, ms->foreColor, true, this);
++		if (ink != kInkTypeBackgndTrans) {
++			ms->pd = &plotFill;
++			primitives->drawRoundRect1(fillAreaRect, 12, ms->foreColor, true, this);
++		}
+ 		// fall through
+ 	case kOutlinedRoundedRectangleSprite:
+ 		if (ms->lineSize <= 0)
+@@ -714,8 +740,10 @@ void DirectorPlotData::inkBlitShape(Common::Rect &srcRect) {
+ 		primitives->drawRoundRect1(strokeRect, 12, ms->foreColor, false, this);
+ 		break;
+ 	case kOvalSprite:
+-		ms->pd = &plotFill;
+-		primitives->drawEllipse(fillAreaRect.left, fillAreaRect.top, fillAreaRect.right, fillAreaRect.bottom, ms->foreColor, true, this);
++		if (ink != kInkTypeBackgndTrans) {
++			ms->pd = &plotFill;
++			primitives->drawEllipse(fillAreaRect.left, fillAreaRect.top, fillAreaRect.right, fillAreaRect.bottom, ms->foreColor, true, this);
++		}
+ 		// fall through
+ 	case kOutlinedOvalSprite:
+ 		if (ms->lineSize <= 0)
+diff --git a/engines/director/lingo/lingo-the.cpp b/engines/director/lingo/lingo-the.cpp
+index 1ec91626..2f27acc8 100644
+--- a/engines/director/lingo/lingo-the.cpp
++++ b/engines/director/lingo/lingo-the.cpp
+@@ -2311,7 +2311,7 @@ void Lingo::setTheCastLib(Datum &id1, int field, Datum &d) {
+ 	switch (field) {
+ 	case kTheFileName:
+ 		{
+-			Common::Path castPath = findMoviePath(d.asString());
++			Common::Path castPath = findCastPath(d.asString());
+ 			movie->loadCastLibFrom(id1.u.i, castPath);
+ 		}
+ 		break;
 diff --git a/engines/director/movie.cpp b/engines/director/movie.cpp
-index f3d966f1..4b130316 100644
+index f3d966f1..187bd75c 100644
 --- a/engines/director/movie.cpp
 +++ b/engines/director/movie.cpp
-@@ -218,10 +218,9 @@ void Movie::loadCastLibMapping(Common::SeekableReadStreamEndian &stream) {
+@@ -218,12 +218,11 @@ void Movie::loadCastLibMapping(Common::SeekableReadStreamEndian &stream) {
  			maxMember = span >= 4 ? stream.readUint16() : 0;
  			libResourceId = span >= 8 ? stream.readUint32() : (span >= 6 ? stream.readUint16() : 1024);
  		}
@@ -272,8 +445,11 @@ index f3d966f1..4b130316 100644
  		bool isExternal = !path.empty();
 +		uint16 libId = i + 1;
  		if (isExternal) {
- 			Common::Path archivePath = findMoviePath(path);
+-			Common::Path archivePath = findMoviePath(path);
++			Common::Path archivePath = findCastPath(path);
  			castArchive = loadExternalCastFrom(archivePath);
+ 			if (!castArchive) {
+ 				continue;	// couldn't load external cast
 @@ -566,6 +565,9 @@ bool Movie::loadCastLibFrom(uint16 libId, Common::Path &filename) {
  
  CastMember *Movie::getCastMember(CastMemberID memberID) {
@@ -322,10 +498,38 @@ index f3d966f1..4b130316 100644
  	if (_casts.contains(id.castLib)) {
  		result = _casts.getVal(id.castLib)->_lingoArchive->getScriptContext(type, id.member);
 diff --git a/engines/director/util.cpp b/engines/director/util.cpp
-index c4fa2d0e..7cd9ad02 100644
+index c4fa2d0e..78e877e3 100644
 --- a/engines/director/util.cpp
 +++ b/engines/director/util.cpp
-@@ -1366,6 +1366,10 @@ Common::CodePage getEncoding(Common::Platform platform, Common::Language languag
+@@ -971,6 +971,27 @@ Common::Path findMoviePath(const Common::String &path, bool currentFolder, bool
+ 	return result;
+ }
+ 
++Common::Path findCastPath(const Common::String &path, bool currentFolder, bool searchPaths, Common::String currentPath) {
++	const char *extsD3[] = { ".MMM", nullptr };
++	const char *extsD4[] = { ".CST", ".CXT", ".DIR", ".DXR", ".EXE", nullptr };
++	const char *extsD5[] = { ".CST", ".CXT", ".DIR", ".DXR", ".EXE", nullptr };
++	const char *extsD6[] = { ".CST", ".CXT", ".CCT", ".DCT", ".DIR", ".DXR", ".EXE", ".DCR", nullptr };
++
++	const char **exts = nullptr;
++	if (g_director->getVersion() < 400) {
++		exts = extsD3;
++	} else if (g_director->getVersion() >= 400 && g_director->getVersion() < 500) {
++		exts = extsD4;
++	} else if (g_director->getVersion() >= 500 && g_director->getVersion() < 600) {
++		exts = extsD5;
++	} else {
++		exts = extsD6;
++	}
++
++	Common::Path result = findPath(path, currentFolder, searchPaths, false, exts, currentPath);
++	return result;
++}
++
+ Common::Path findXLibPath(const Common::String &path, bool currentFolder, bool searchPaths) {
+ 	const char *extsD3[] = { ".DLL", nullptr };
+ 	const char *extsD5[] = { ".DLL", ".X16", ".X32", nullptr };
+@@ -1366,6 +1387,10 @@ Common::CodePage getEncoding(Common::Platform platform, Common::Language languag
  	switch (language) {
  	case Common::JA_JPN:
  		return Common::kWindows932; // Shift JIS
@@ -336,7 +540,7 @@ index c4fa2d0e..7cd9ad02 100644
  	default:
  		break;
  	}
-@@ -1381,7 +1385,10 @@ Common::CodePage getEncoding(Common::Platform platform, Common::Language languag
+@@ -1381,7 +1406,10 @@ Common::CodePage getEncoding(Common::Platform platform, Common::Language languag
  }
  
  Common::CodePage detectFontEncoding(Common::Platform platform, uint16 fontId) {
@@ -348,3 +552,15 @@ index c4fa2d0e..7cd9ad02 100644
  }
  
  int charToNum(Common::u32char_type_t ch) {
+diff --git a/engines/director/util.h b/engines/director/util.h
+index 66134671..51c8592a 100644
+--- a/engines/director/util.h
++++ b/engines/director/util.h
+@@ -52,6 +52,7 @@ Common::Path findAbsolutePath(const Common::String &path, bool directory = false
+ Common::Path findPath(const Common::Path &path, bool currentFolder = true, bool searchPaths = true, bool directory = false, const char **exts = nullptr);
+ Common::Path findPath(const Common::String &path, bool currentFolder = true, bool searchPaths = true, bool directory = false, const char **exts = nullptr, Common::String currentPath_ = "");
+ Common::Path findMoviePath(const Common::String &path, bool currentFolder = true, bool searchPaths = true, Common::String currentPath = "");
++Common::Path findCastPath(const Common::String &path, bool currentFolder = true, bool searchPaths = true, Common::String currentPath = "");
+ Common::Path findXLibPath(const Common::String &path, bool currentFolder = true, bool searchPaths = true);
+ Common::Path findAudioPath(const Common::String &path, bool currentFolder = true, bool searchPaths = true);
+ 

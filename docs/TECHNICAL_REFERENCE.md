@@ -193,6 +193,28 @@ These are the Director features this game relies on, and therefore where ScummVM
   2. In `BitmapCastMember::getDitherImg()`, when `castPaletteId` was null or `<= 0`, it fell back to `currentPaletteId`. Because previous score frames set palettes during transitions or fades, `currentPaletteId` pointed to Mac System palette instead of the movie's default palette.
 - **Fix:** In `engines/director/castmember/bitmap.cpp`, map `clutId == 0` to `CastMemberID(0, 0)`. In `getDitherImg()` and `isModified()`, when `castPaletteId` is null or `member <= 0`, fall back to `_cast->_defaultPalette` (if `member > 0`) or `movie->_defaultPalette` before falling back to `currentPaletteId`.
 
+### 3.8 Lingo builtin return value in `the result` and 2-argument `addAt()`
+
+- **Symptom:** In the adventure setup menu (`sommaire` -> "Εκκίνηση περιπέτειας" -> Frame 71 of `FRST.dxr`), entering a player name and clicking an age option ("7/9 χρονών" or "+9 χρονών") did nothing, leaving the player stuck on the menu.
+- **Root cause:**
+  1. On clicking an age button, `BehaviorScript 12 - OK nom` runs `nouveaujoueur2()`, which calls `initList()` -> `initordrepartie()`.
+  2. In `initordrepartie()`, the list of game scenes is populated via:
+     ```lingo
+     repeat with q = 1 to count(list)
+       getAt(list, q)
+       if the result <> 0 then
+         addAt(List2, the result)
+       end if
+     end repeat
+     getAt(List2, 1)
+     ```
+  3. In `engines/director/lingo/lingo-code.cpp` (`LC::call`), when a builtin was called as a statement (`!allowRetVal`), ScummVM popped the returned value from the stack and logged `warning("Builtin '%s' dropping return value...", ...)`, but **never stored it into `g_lingo->_theResult`** (unlike user-defined handlers in `Lingo::popContext()`). Because `the result` remained `VOID`, `if the result <> 0` was always false.
+  4. Furthermore, `addAt(List2, the result)` was called with 2 arguments (intending to append to `List2`). ScummVM declared `addAt` with `minArgs = 3`, dropping all 2-argument calls with an argument mismatch warning.
+  5. As a result, `List2` remained empty (`[]`), causing `getAt(List2, 1)` to fail with an uncaught `b_getAt: index out of bounds (1 of 0)!` error, aborting the Lingo call stack and preventing `go("film")` from ever executing.
+- **Fix:**
+  1. In `engines/director/lingo/lingo-code.cpp`, assign `g_lingo->_theResult = extra` when dropping a non-void builtin return value (`!allowRetVal`).
+  2. In `engines/director/lingo/lingo-builtins.cpp`, allow `addAt` to accept 2 to 3 arguments (`minArgs = 2`); when called with 2 arguments (`addAt(list, val)`), append the value to the list.
+
 ---
 
 ## 4. The web port
@@ -399,4 +421,5 @@ Use `--debugflags=<list> -d <level>`; on the web, add them to `Module.arguments`
 | 2026-10-13 | `91aa7e4`…`c6373b8` | Initial preservation: MacGreek, detection, castLib −1 fix, CD-check bypass, string extraction; WebAssembly player, Pages workflow, splash screen, auto-boot, cache-busting |
 | 2026-10-13 | `eb42670` | Palette castLib 0 resolution (fixes blown-out colours); audio unlocked in the Play click; new screenshots |
 | 2026-10-13 | `cd5b51a` | Mobile layout (fullscreen 4:3, canvas size sync), ⌨ on-screen keyboard, ⛶ fullscreen, SDL3 key-handler de-dupe (6x typing), 16bpp screen format (stale signpost, label colours), PWA manifest |
-| 2026-10-14 | | Shape sprite BackgndTrans fill skip (fixes solid button overlays and black bars), bitmap clutId == 0 default palette resolution (fixes forest backdrop palette) |
+| 2026-10-14 | `b31e50b` | Shape sprite BackgndTrans fill skip (fixes solid button overlays and black bars), bitmap clutId == 0 default palette resolution (fixes forest backdrop palette) |
+| 2026-10-14 | | Lingo builtin `the result` preservation and 2-argument `addAt()` support (fixes starting new adventure from age selection menu) |

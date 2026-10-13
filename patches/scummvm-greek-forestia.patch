@@ -226,18 +226,10 @@ index 6c928ccb..0cb93456 100644
  		return !_ditheredTargetClut.isNull() && _ditheredTargetClut != currentPaletteId;
  	}
 diff --git a/engines/director/castmember/richtext.cpp b/engines/director/castmember/richtext.cpp
-index b29aa879..8638eb27 100644
+index b29aa879..761a57c6 100644
 --- a/engines/director/castmember/richtext.cpp
 +++ b/engines/director/castmember/richtext.cpp
-@@ -33,6 +33,7 @@
- #include "director/window.h"
- #include "director/castmember/richtext.h"
- #include "director/lingo/lingo-the.h"
-+#include "image/bmp.h"
- 
- namespace Director {
- 
-@@ -141,7 +142,7 @@ void RichTextCastMember::load() {
+@@ -141,7 +141,7 @@ void RichTextCastMember::load() {
  	if (_cast->_loadedRTE1s.contains(rte1id)) {
  		const RTE1 *rte1 =  _cast->_loadedRTE1s.getVal(rte1id);
  		if (!rte1->data.empty())
@@ -246,7 +238,7 @@ index b29aa879..8638eb27 100644
  	} else {
  		warning("RichTextCastMember::load(): rte1tid %i isn't loaded, no plain text!", rte1id);
  	}
-@@ -188,8 +189,8 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
+@@ -188,8 +188,8 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
  	Graphics::Surface *dithered = nullptr;
  	Picture *src = _pictureWithBg;
  
@@ -257,19 +249,10 @@ index b29aa879..8638eb27 100644
  
  	if (dstBpp == 1) {
  		dithered = src->_surface.convertTo(g_director->_wm->_pixelformat, nullptr, 0, g_director->_wm->getPalette(), g_director->_wm->getPaletteSize());
-@@ -204,6 +205,16 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
+@@ -204,6 +204,7 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
  		g_director->_wm->getPalette()
  	);
  
-+	if (_castId == 23) {
-+		Common::DumpFile df1, df2;
-+		df1.open(Common::Path("/tmp/src_23.bmp"), true);
-+		Image::writeBMP(df1, src->_surface);
-+		df1.close();
-+		df2.open(Common::Path("/tmp/widget_23.bmp"), true);
-+		Image::writeBMP(df2, *widget->getSurface()->surfacePtr());
-+		df2.close();
-+	}
 +
  	if (dithered) {
  		dithered->free();
@@ -418,6 +401,48 @@ index 178f0467..619ed217 100644
  		// fall through
  	case kOutlinedOvalSprite:
  		if (ms->lineSize <= 0)
+diff --git a/engines/director/lingo/lingo-builtins.cpp b/engines/director/lingo/lingo-builtins.cpp
+index 9695c048..cab688d7 100644
+--- a/engines/director/lingo/lingo-builtins.cpp
++++ b/engines/director/lingo/lingo-builtins.cpp
+@@ -80,7 +80,7 @@ static const BuiltinProto builtins[] = {
+ 	{ "value",		 	LB::b_value,		1, 1, 200, FBLTIN },	// D2 f
+ 	// Lists
+ 	{ "add",			LB::b_add,			2, 2, 400, HBLTIN_LIST },	//			D4 handler
+-	{ "addAt",			LB::b_addAt,		3, 3, 400, HBLTIN_LIST },	//			D4 h
++	{ "addAt",			LB::b_addAt,		2, 3, 400, HBLTIN_LIST },	//			D4 h
+ 	{ "addProp",		LB::b_addProp,		3, 3, 400, HBLTIN_LIST },	//			D4 h
+ 	{ "append",			LB::b_append,		2, 2, 400, HBLTIN_LIST },	//			D4 h
+ 	{ "count",			LB::b_count,		1, 1, 400, FBLTIN_LIST },	//			D4 f
+@@ -883,6 +883,15 @@ void LB::b_add(int nargs) {
+ }
+ 
+ void LB::b_addAt(int nargs) {
++	if (nargs == 2) {
++		Datum value = g_lingo->pop();
++		Datum list = g_lingo->pop();
++		TYPECHECK(list, ARRAY);
++		list.u.farr->arr.push_back(value);
++		list.u.farr->_sorted = false;
++		return;
++	}
++
+ 	Datum value = g_lingo->pop();
+ 	Datum indexD = g_lingo->pop();
+ 	Datum list = g_lingo->pop();
+diff --git a/engines/director/lingo/lingo-code.cpp b/engines/director/lingo/lingo-code.cpp
+index db6ff976..954c60e0 100644
+--- a/engines/director/lingo/lingo-code.cpp
++++ b/engines/director/lingo/lingo-code.cpp
+@@ -1853,6 +1853,8 @@ void LC::call(const Symbol &funcSym, int nargs, bool allowRetVal) {
+ 				if (!allowRetVal) {
+ 					Datum extra = g_lingo->pop();
+ 					warning("Builtin '%s' dropping return value: %s", funcSym.name->c_str(), extra.asString(true).c_str());
++					if (extra.type != VOID)
++						g_lingo->_theResult = extra;
+ 				}
+ 			} else if (stackSize == stackSizeBefore) {
+ 				if (allowRetVal)
 diff --git a/engines/director/lingo/lingo-the.cpp b/engines/director/lingo/lingo-the.cpp
 index 1ec91626..2f27acc8 100644
 --- a/engines/director/lingo/lingo-the.cpp

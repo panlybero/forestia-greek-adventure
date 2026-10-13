@@ -179,11 +179,12 @@ These are the Director features this game relies on, and therefore where ScummVM
 - **`Clash in case for match of pattern "data"` warnings and "name clash" spam:** these come from the lower/upper-case symlinks created by `organize_iso_assets.py`. ScummVM is case-insensitive anyway, so the symlinks are unnecessary.
 - **`Movie::getCastMember: member 140..143 NOT FOUND in castLib 1`:** appears during boot and seems harmless.
 
-### 3.6 Shape Sprite solid fill skip on BackgndTrans ink
+### 3.6 Shape sprites with BackgndTrans ink (fill skip, reverted)
 
-- **Symptom:** Solid colored boxes covering the main menu buttons ("Έξοδος", "Επιλογές", "Βοήθεια"), solid black bar across the notice board over "Επιλογές", and solid black boxes covering the age buttons.
-- **Root cause:** Shape sprites (`kRectangleSprite`, `kRoundedRectangleSprite`, `kOvalSprite`) with `kInkTypeBackgndTrans` were calling `drawFilledRect1()`, `drawRoundRect1()`, and `drawEllipse()` with `ms->foreColor` unconditionally before drawing the stroke outline. Because the interior was filled with `foreColor` (which differed from `backColor`), `kInkTypeBackgndTrans` treated the fill pixels as opaque.
-- **Fix:** In `engines/director/graphics.cpp` (`DirectorPlotData::inkBlitShape`), only draw the interior fill when `ink != kInkTypeBackgndTrans`.
+- An earlier pass skipped the interior fill of filled shapes drawn with `kInkTypeBackgndTrans`, to get rid of "solid boxes" over the bottom menu labels and the age buttons.
+- That was wrong. Screenshots of the original (French release) show the bottom bar as **filled coloured boxes** with the labels on top (brown-red "Quitter", green "Retour", …). The real causes of the solid boxes were the wrong box colours (§3.9) and the rich-text rendering (§3.10).
+- The skip has been **removed**. Filled shapes are drawn normally again. Upstream `inkBlitShape` is unchanged.
+- The boxes are member 39 of the internal cast: a filled rectangle with line size 2. The menu uses it with sprite foreColor indexes 142, 67 and 59. On the notice board, the bar behind "Επιλογές" uses index 255 (black). Without a reference screenshot of that screen, it is not confirmed that a black bar is what the original showed.
 
 ### 3.7 BitmapCastMember default palette fallback (`clutId == 0`)
 
@@ -214,6 +215,49 @@ These are the Director features this game relies on, and therefore where ScummVM
 - **Fix:**
   1. In `engines/director/lingo/lingo-code.cpp`, assign `g_lingo->_theResult = extra` when dropping a non-void builtin return value (`!allowRetVal`).
   2. In `engines/director/lingo/lingo-builtins.cpp`, allow `addAt` to accept 2 to 3 arguments (`minArgs = 2`); when called with 2 arguments (`addAt(list, val)`), append the value to the list.
+
+### 3.9 Sprite/shape colour indices: use the movie's default palette
+
+- **Symptom:** The bottom menu boxes had the wrong colours (maroon, magenta and orange), and they changed depending on when the frame was decoded. At times only their outlines were visible.
+- **Root cause:**
+  - In true colour, `DirectorEngine::transformColor()` converts a palette index to RGB using `_currentPalette` **at the time the frame is decoded**.
+  - Forestia's palette channel switches to "System – Mac" for long stretches (`fading palette to member -1 … over 494 frames`).
+  - So index 142 became Mac colour `#630030` instead of `#A52D18` from the movie palette P.MIDI (member 501 of castLib 2).
+  - At "thousands of colours" Director doesn't apply the palette channel to colour indices. The original's screenshots match P.MIDI exactly: brown-red 142, green 67.
+- **Fix:**
+  - `engines/director/graphics.cpp` (`transformColor`): when `_paletteIndependentColors` is set, indices are resolved against the current movie's default palette (falling back to the cast's default palette, then to the old behaviour).
+  - `director.cpp`: the flag is set together with the 16bpp preference, for `forestia` only.
+
+### 3.10 Anti-aliased rich text: alpha blending instead of a white halo
+
+- **Symptom:** All rich-text labels had white/grey speckles around the glyphs. This affected the notice board instructions, the bottom menu labels and the age buttons.
+- **Root cause:**
+  - RTE2 is an anti-aliased coverage map.
+  - Earlier, `RichTextCastMember::createWidget()` had been changed to always use the version pre-blended against the member's white background. For `BackgndTrans` ink, exact white was then keyed out, but the half-blended edge pixels stayed.
+  - The plain version (`_picture`) can't be used directly, because the widget surface has no alpha. Its transparent pixels become solid text colour, which caused the earlier "black boxes" over the age buttons.
+- **Fix:**
+  - For `BackgndTrans`/`Matte` inks in true colour, the widget is built from the plain glyph colours, and an 8-bit coverage mask is kept (`RichTextCastMember::_alphaMask`, scaled like the widget).
+  - `Channel::getPlotData()` passes it as `DirectorPlotData::srfAlpha`.
+  - The new `DirectorPlotData::inkBlitAlpha()` blends source over destination per pixel. It also respects a sprite blend amount.
+  - 8-bit mode and `Copy` ink keep the old path.
+
+### 3.11 RTE2 decoder: end-of-line marker after a full line
+
+- **Symptom:** Some rich-text images were striped and cut off. The clearest case is "χρονών" under "+9" on the notice board: every other line was empty and the bottom of the text was missing.
+- **Root cause:**
+  - In `RTE2::createSurface()` (`engines/director/rte.cpp`), lines are terminated by `0x00 0x00`.
+  - When a line's runs fill the whole width, the encoder still writes that marker. ScummVM read it as an empty *next* line, so everything after it moved down by one line.
+  - An offline re-decode of every RTE2 chunk on the disc found **~60 affected images**: 16 in FTEXTES, 20 in FALB_3, 4 in FALB_2, 2 in BAJ and 2 in GENEFIN, among others. With the fix, every chunk decodes to exactly its byte length.
+- **Fix:** after a line has been filled without an explicit end-of-line, consume a directly following `0x00 0x00`. A zero-length run of 0 never occurs otherwise, so this is unambiguous.
+- **Upstream:** this one is a clean candidate.
+
+### 3.12 Film loop members with castLib −1 (the hand cursor)
+
+- **Symptom:** The game's animated hand cursor never appeared. This is film loop member 66 of castLib 19 (CURS), puppeted to follow the mouse. The log showed `No source surface … castType: 11 (script), castId: member 11 of castLib -1`.
+- **Root cause:**
+  - The film loop's score stores castLib −1 for members that live in the film loop's own cast library.
+  - Together with the §3.1 mapping of −1 to `DEFAULT_CAST_LIB`, those members resolved to unrelated script members of the internal cast.
+- **Fix:** `FilmLoopCastMember::getSubChannels()` (`castmember/filmloop.cpp`) rewrites castLib −1 to the film loop's own `_castLibID` before resolving the member.
 
 ---
 
@@ -397,6 +441,8 @@ Use `--debugflags=<list> -d <level>`; on the web, add them to `Module.arguments`
 **Engine:**
 - [ ] Find the real **32bpp rendering bug** (stale sprites and wrong ink colours). The 16bpp preference is a workaround. Once fixed, the upstream patch can drop the `forestia` special case.
 - [ ] Confirm what castLib 0 means for D5/D6 bitmap cluts, then upstream §3.2.
+- [ ] Check against a reference capture of the original whether the notice board's "Επιλογές" bar really is black (§3.6).
+- [ ] Upstream the RTE2 end-of-line fix (§3.11) and the film loop castLib −1 fix (§3.12). Both are game-independent.
 - [ ] Upstream the MacGreek code page, the Greek detection entry and the castLib −1 fix.
 - [ ] Do a full play-through: mini-games, album, saving and loading, quitting, end credits. Check the unimplemented Xtras (`swastrm`/`swadcmpr` Shockwave Audio, `MIX32`, `SCRNXTRA`) along the way.
 - [ ] Find out how save games are stored and whether they persist in the browser across sessions (IndexedDB).
@@ -422,4 +468,5 @@ Use `--debugflags=<list> -d <level>`; on the web, add them to `Module.arguments`
 | 2026-10-13 | `eb42670` | Palette castLib 0 resolution (fixes blown-out colours); audio unlocked in the Play click; new screenshots |
 | 2026-10-13 | `cd5b51a` | Mobile layout (fullscreen 4:3, canvas size sync), ⌨ on-screen keyboard, ⛶ fullscreen, SDL3 key-handler de-dupe (6x typing), 16bpp screen format (stale signpost, label colours), PWA manifest |
 | 2026-10-14 | `b31e50b` | Shape sprite BackgndTrans fill skip (fixes solid button overlays and black bars), bitmap clutId == 0 default palette resolution (fixes forest backdrop palette) |
-| 2026-10-14 | | Lingo builtin `the result` preservation and 2-argument `addAt()` support (fixes starting new adventure from age selection menu) |
+| 2026-10-14 | `b3ad106` | Lingo builtin `the result` preservation and 2-argument `addAt()` support (fixes starting new adventure from age selection menu) |
+| 2026-10-14 | | Text/visual pass: reverted the §3.6 fill skip; colour indices resolved against the movie palette (§3.9); alpha-blended rich text (§3.10); RTE2 end-of-line decode fix (§3.11); film loop castLib −1 (§3.12, hand cursor). Web `BUILD` 20261014d |

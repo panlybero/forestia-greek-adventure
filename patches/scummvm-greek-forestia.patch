@@ -225,11 +225,51 @@ index 6c928ccb..0cb93456 100644
  
  		return !_ditheredTargetClut.isNull() && _ditheredTargetClut != currentPaletteId;
  	}
+diff --git a/engines/director/castmember/filmloop.cpp b/engines/director/castmember/filmloop.cpp
+index 4e8445f2..d945c932 100644
+--- a/engines/director/castmember/filmloop.cpp
++++ b/engines/director/castmember/filmloop.cpp
+@@ -144,7 +144,14 @@ Common::Array<Channel> *FilmLoopCastMember::getSubChannels(Common::Rect &bbox, u
+ 		if (src._castId.isNull())
+ 			continue;
+ 
+-		if (src._cast == nullptr && _cast != nullptr)
++		// D5+ film loops store a cast library of -1 for members that live in
++		// the same cast library as the film loop itself (e.g. Forestia's
++		// animated cursors in the external CURS cast). Without this they get
++		// resolved against the internal cast and draw unrelated members.
++		if (src._castId.castLib == -1 && _cast != nullptr && _cast->_castLibID > 0) {
++			src._castId.castLib = _cast->_castLibID;
++			src.setCast(src._castId);
++		} else if (src._cast == nullptr && _cast != nullptr)
+ 			src.setCast(src._castId);
+ 
+ 		debugCN(5, kDebugImages, "FilmLoopCastMember::getSubChannels(): sprite: %d - cast: %s, orig: %d,%d %dx%d",
 diff --git a/engines/director/castmember/richtext.cpp b/engines/director/castmember/richtext.cpp
-index b29aa879..761a57c6 100644
+index b29aa879..6a20bbe1 100644
 --- a/engines/director/castmember/richtext.cpp
 +++ b/engines/director/castmember/richtext.cpp
-@@ -141,7 +141,7 @@ void RichTextCastMember::load() {
+@@ -103,6 +103,19 @@ RichTextCastMember::~RichTextCastMember() {
+ 
+ 	if (_pictureWithBg)
+ 		delete _pictureWithBg;
++
++	if (_alphaMask) {
++		_alphaMask->free();
++		delete _alphaMask;
++	}
++}
++
++bool RichTextCastMember::usesAlphaBlend(InkType ink) {
++	// Anti-aliased rich text drawn with these inks is blended with whatever is
++	// underneath. Rendering it against its background colour and then keying
++	// that colour out leaves a halo of half-blended pixels around the glyphs.
++	return g_director->_wm->_pixelformat.bytesPerPixel > 1 &&
++		(ink == kInkTypeBackgndTrans || ink == kInkTypeMatte);
+ }
+ 
+ void RichTextCastMember::load() {
+@@ -141,7 +154,7 @@ void RichTextCastMember::load() {
  	if (_cast->_loadedRTE1s.contains(rte1id)) {
  		const RTE1 *rte1 =  _cast->_loadedRTE1s.getVal(rte1id);
  		if (!rte1->data.empty())
@@ -238,25 +278,100 @@ index b29aa879..761a57c6 100644
  	} else {
  		warning("RichTextCastMember::load(): rte1tid %i isn't loaded, no plain text!", rte1id);
  	}
-@@ -188,8 +188,8 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
+@@ -187,8 +200,11 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
+ 
  	Graphics::Surface *dithered = nullptr;
  	Picture *src = _pictureWithBg;
++	bool alphaBlend = usesAlphaBlend(channel->_sprite->_ink);
  
 -	if (channel->_sprite->_ink == kInkTypeBackgndTrans)
--		src = _picture;
-+	// if (channel->_sprite->_ink == kInkTypeBackgndTrans)
-+	// 	src = _picture;
++	// For blending inks draw the plain glyph colours and keep the coverage
++	// separately; the ink blitter mixes them with the stage.
++	if (alphaBlend)
+ 		src = _picture;
  
  	if (dstBpp == 1) {
- 		dithered = src->_surface.convertTo(g_director->_wm->_pixelformat, nullptr, 0, g_director->_wm->getPalette(), g_director->_wm->getPaletteSize());
-@@ -204,6 +204,7 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
- 		g_director->_wm->getPalette()
- 	);
- 
-+
- 	if (dithered) {
- 		dithered->free();
+@@ -209,6 +225,36 @@ Graphics::MacWidget *RichTextCastMember::createWidget(Common::Rect &bbox, Channe
  		delete dithered;
+ 	}
+ 
++	if (_alphaMask) {
++		_alphaMask->free();
++		delete _alphaMask;
++		_alphaMask = nullptr;
++	}
++
++	if (alphaBlend) {
++		const Graphics::Surface &pic = _picture->_surface;
++		Graphics::Surface coverage;
++		coverage.create(pic.w, pic.h, Graphics::PixelFormat::createFormatCLUT8());
++		for (int y = 0; y < pic.h; y++) {
++			for (int x = 0; x < pic.w; x++) {
++				uint8 a, r, g, b;
++				pic.format.colorToARGB(pic.getPixel(x, y), a, r, g, b);
++				*(byte *)coverage.getBasePtr(x, y) = a;
++			}
++		}
++
++		_alphaMask = new Graphics::ManagedSurface();
++		if (bbox.width() != _initialRect.width() || bbox.height() != _initialRect.height()) {
++			Graphics::Surface *scaled = coverage.scale(bbox.width(), bbox.height(), false);
++			_alphaMask->copyFrom(*scaled);
++			scaled->free();
++			delete scaled;
++		} else {
++			_alphaMask->copyFrom(coverage);
++		}
++		coverage.free();
++	}
++
+ 	return widget;
+ }
+ 
+diff --git a/engines/director/castmember/richtext.h b/engines/director/castmember/richtext.h
+index 5c8183d3..c3d2168e 100644
+--- a/engines/director/castmember/richtext.h
++++ b/engines/director/castmember/richtext.h
+@@ -56,6 +56,11 @@ public:
+ 	Graphics::PixelFormat _pf32;
+ 	Picture *_picture;
+ 	Picture *_pictureWithBg;
++	// Glyph coverage of the last widget created for an ink that blends the
++	// anti-aliased text with the stage (see createWidget())
++	Graphics::ManagedSurface *_alphaMask = nullptr;
++	Graphics::ManagedSurface *getAlphaMask() { return _alphaMask; }
++	static bool usesAlphaBlend(InkType ink);
+ 
+ 	// _initialRect
+ 	// _boundingRect
+diff --git a/engines/director/channel.cpp b/engines/director/channel.cpp
+index 8f53c3dc..de859e44 100644
+--- a/engines/director/channel.cpp
++++ b/engines/director/channel.cpp
+@@ -33,6 +33,7 @@
+ #include "director/castmember/digitalvideo.h"
+ #include "director/castmember/filmloop.h"
+ #include "director/castmember/movie.h"
++#include "director/castmember/richtext.h"
+ #include "director/castmember/text.h"
+ 
+ #include "graphics/macgui/mactext.h"
+@@ -157,6 +158,15 @@ DirectorPlotData Channel::getPlotData() {
+ 	}
+ 
+ 	pd.srfMask = nullptr;
++	pd.srfAlpha = nullptr;
++	if (pd.srf && _sprite->_cast && _sprite->_cast->_type == kCastRichText &&
++			RichTextCastMember::usesAlphaBlend(_sprite->_ink)) {
++		Graphics::ManagedSurface *coverage = ((RichTextCastMember *)_sprite->_cast)->getAlphaMask();
++		if (coverage && coverage->w == pd.srf->w && coverage->h == pd.srf->h) {
++			pd.srfAlpha = coverage;
++			pd.applyColor = false;
++		}
++	}
+ 	if (_sprite->_cast && _sprite->_cast->_type == kCastText) {
+ 		// kInkTypeCopy -- no mask, default rendering
+ 
 diff --git a/engines/director/detection_tables.h b/engines/director/detection_tables.h
 index 0d644ff9..95ad90e7 100644
 --- a/engines/director/detection_tables.h
@@ -270,10 +385,10 @@ index 0d644ff9..95ad90e7 100644
  	// Later releases are D8
  	WINGAME1_l("forestiajr", "", "FJPC/Forestia Junior.exe", "t:07a7028e8d3c13ac730eeda6b60eec6c", 1553190, Common::FR_FRA, 650),
 diff --git a/engines/director/director.cpp b/engines/director/director.cpp
-index 7857289f..0bfa63e5 100644
+index 7857289f..00a5f72f 100644
 --- a/engines/director/director.cpp
 +++ b/engines/director/director.cpp
-@@ -285,6 +285,20 @@ Common::Error DirectorEngine::run() {
+@@ -285,6 +285,21 @@ Common::Error DirectorEngine::run() {
  	if (ConfMan.getBool("true_color") || (getGameFlags() & GF_TRUECOLOR) || debugChannelSet(-1, kDebug32bpp)) {
  		// Both 16bpp and 32bpp formats are supported, but 32bpp is always reported to the scripts.
  		_pixelformat = g_system->getSupportedFormats().front();
@@ -283,6 +398,7 @@ index 7857289f..0bfa63e5 100644
 +		// signpost over the notice board) and some text gets the wrong colour,
 +		// while 16bpp renders correctly. Prefer a 16bpp format when available.
 +		if (!strcmp(getGameId(), "forestia")) {
++			_paletteIndependentColors = true;
 +			for (auto &format : g_system->getSupportedFormats()) {
 +				if (format.bytesPerPixel == 2) {
 +					_pixelformat = format;
@@ -295,7 +411,7 @@ index 7857289f..0bfa63e5 100644
  	} else {
  		_pixelformat = Graphics::PixelFormat::createFormatCLUT8();
 diff --git a/engines/director/director.h b/engines/director/director.h
-index 82b393d4..036db645 100644
+index 82b393d4..5a0dfbea 100644
 --- a/engines/director/director.h
 +++ b/engines/director/director.h
 @@ -205,6 +205,7 @@ public:
@@ -306,11 +422,64 @@ index 82b393d4..036db645 100644
  	bool hasPalette(CastMemberID id);
  	void loadDefaultPalettes();
  
+@@ -319,6 +320,9 @@ public:
+ 
+ private:
+ 	byte _currentPalette[768];
++	// Map palette indices through the movie's default palette instead of the
++	// currently active one (true colour, see transformColor()).
++	bool _paletteIndependentColors = false;
+ 	uint16 _currentPaletteLength;
+ 	bool _gammaCorrection;
+ 	Lingo *_lingo;
+@@ -366,6 +370,8 @@ struct DirectorPlotData {
+ 
+ 	Graphics::ManagedSurface *srf = nullptr;
+ 	Graphics::ManagedSurface *srfMask = nullptr;
++	// 8-bit coverage map for anti-aliased sources (rich text), true colour only
++	Graphics::ManagedSurface *srfAlpha = nullptr;
+ 	MacShape *ms = nullptr;
+ 
+ 	SpriteType sprite = kInactiveSprite;
+@@ -384,6 +390,7 @@ struct DirectorPlotData {
+ 	uint32 preprocessColor(uint32 src);
+ 	void inkBlitShape(Common::Rect &srcRect);
+ 	void inkBlitSurface(Common::Rect &srcRect, const Graphics::Surface *mask);
++	void inkBlitAlpha(Common::Rect &srcRect);
+ 
+ 	DirectorPlotData(DirectorEngine *d_, SpriteType s, InkType i, int a, uint32 b, uint32 f) : d(d_), sprite(s), ink(i), alpha(a), backColor(b), foreColor(f) {
+ 		colorWhite = d->_wm->_colorWhite;
 diff --git a/engines/director/graphics.cpp b/engines/director/graphics.cpp
-index 178f0467..619ed217 100644
+index 178f0467..1e9932b9 100644
 --- a/engines/director/graphics.cpp
 +++ b/engines/director/graphics.cpp
-@@ -138,13 +138,37 @@ void DirectorEngine::loadDefaultPalettes() {
+@@ -49,6 +49,25 @@ uint32 DirectorEngine::transformColor(uint32 color) {
+ 	if (color > 0xff)
+ 		return _wm->findBestColor((color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
+ 
++	// Forestia was authored for "thousands of colours". At that depth Director
++	// ignores the score's palette channel when mapping palette indices (sprite
++	// fore/back colours, shape colours), so the indices keep referring to the
++	// movie's default palette. The palette channel of this game switches to
++	// "System - Mac" for long stretches, which in ScummVM would turn e.g. the
++	// brown/green/ochre bottom menu boxes into maroon/magenta/orange depending
++	// on which palette happened to be active when the frame was decoded.
++	if (_paletteIndependentColors) {
++		Movie *movie = _currentWindow ? _currentWindow->getCurrentMovie() : nullptr;
++		if (movie) {
++			CastMemberID palId = movie->_defaultPalette;
++			if (palId.isNull() && movie->getCast())
++				palId = movie->getCast()->_defaultPalette;
++			PaletteV4 *pal = hasPalette(palId) ? getPalette(palId) : nullptr;
++			if (pal && pal->palette && (int)color < pal->length)
++				return _wm->findBestColor(pal->palette[color * 3], pal->palette[color * 3 + 1], pal->palette[color * 3 + 2]);
++		}
++	}
++
+ 	return _wm->findBestColor(_currentPalette[color * 3], _currentPalette[color * 3 + 1], _currentPalette[color * 3 + 2]);
+ }
+ 
+@@ -138,13 +157,37 @@ void DirectorEngine::loadDefaultPalettes() {
  	_loaded4Palette = PaletteV4(CastMemberID(kClutGrayscale, -1), grayscale4Palette, 4);
  }
  
@@ -351,7 +520,7 @@ index 178f0467..619ed217 100644
  
  	if (!_loadedPalettes.contains(id)) {
  		warning("DirectorEngine::getPalette(): Palette %s not found, hash %x", id.asString().c_str(), id.hash());
-@@ -155,9 +179,7 @@ PaletteV4 *DirectorEngine::getPalette(CastMemberID id) {
+@@ -155,9 +198,7 @@ PaletteV4 *DirectorEngine::getPalette(CastMemberID id) {
  }
  
  bool DirectorEngine::hasPalette(CastMemberID id) {
@@ -362,45 +531,72 @@ index 178f0467..619ed217 100644
  
  	return _loadedPalettes.contains(id);
  }
-@@ -685,8 +707,10 @@ void DirectorPlotData::inkBlitShape(Common::Rect &srcRect) {
+@@ -747,6 +788,11 @@ void DirectorPlotData::inkBlitSurface(Common::Rect &srcRect, const Graphics::Sur
+ 	if (mask && srfMask)
+ 		error("DirectorPlotData::inkBlitSurface: Masking not supported on surfaces with separate mask");
  
- 	switch (ms->spriteType) {
- 	case kRectangleSprite:
--		ms->pd = &plotFill;
--		primitives->drawFilledRect1(fillAreaRect, ms->foreColor, this);
-+		if (ink != kInkTypeBackgndTrans) {
-+			ms->pd = &plotFill;
-+			primitives->drawFilledRect1(fillAreaRect, ms->foreColor, this);
++	if (srfAlpha && d->_wm->_pixelformat.bytesPerPixel > 1) {
++		inkBlitAlpha(srcRect);
++		return;
++	}
++
+ 	// TODO: Determine why colourization causes problems in Warlock
+ 	if (sprite == kTextSprite || sprite == kButtonSprite || sprite == kCheckboxSprite || sprite == kRadioButtonSprite)
+ 		applyColor = false;
+@@ -827,4 +873,53 @@ void DirectorPlotData::inkBlitSurface(Common::Rect &srcRect, const Graphics::Sur
+ 
+ }
+ 
++// Blend an anti-aliased source (e.g. rich text) with the destination, using
++// the per-pixel coverage in srfAlpha. True colour only.
++void DirectorPlotData::inkBlitAlpha(Common::Rect &srcRect) {
++	const Graphics::PixelFormat &pf = d->_wm->_pixelformat;
++	const int bpp = pf.bytesPerPixel;
++	const int srcX = abs(srcRect.left - destRect.left);
++	const int srcY = abs(srcRect.top - destRect.top);
++
++	for (int i = 0; i < destRect.height(); i++) {
++		int sy = srcY + i;
++		int dy = destRect.top + i;
++		if (sy < 0 || sy >= srf->h || sy >= srfAlpha->h || dy < 0 || dy >= dst->h)
++			continue;
++
++		for (int j = 0; j < destRect.width(); j++) {
++			int sx = srcX + j;
++			int dx = destRect.left + j;
++			if (sx < 0 || sx >= srf->w || sx >= srfAlpha->w || dx < 0 || dx >= dst->w)
++				continue;
++
++			int a = *(const byte *)srfAlpha->getBasePtr(sx, sy);
++			// Sprite blend: same convention as InkPrimitives (alpha weights dst)
++			if (alpha)
++				a = a * (255 - CLIP(alpha, 0, 255)) / 255;
++			if (a == 0)
++				continue;
++
++			uint32 src = (bpp == 2) ? *(const uint16 *)srf->getBasePtr(sx, sy) : *(const uint32 *)srf->getBasePtr(sx, sy);
++			uint32 out = src;
++
++			if (a < 255) {
++				uint32 cur = (bpp == 2) ? *(const uint16 *)dst->getBasePtr(dx, dy) : *(const uint32 *)dst->getBasePtr(dx, dy);
++				byte rS, gS, bS, rD, gD, bD;
++				pf.colorToRGB(src, rS, gS, bS);
++				pf.colorToRGB(cur, rD, gD, bD);
++				out = pf.RGBToColor(
++					(rS * a + rD * (255 - a)) / 255,
++					(gS * a + gD * (255 - a)) / 255,
++					(bS * a + bD * (255 - a)) / 255);
++			}
++
++			if (bpp == 2)
++				*(uint16 *)dst->getBasePtr(dx, dy) = out;
++			else
++				*(uint32 *)dst->getBasePtr(dx, dy) = out;
 +		}
- 		// fall through
- 	case kOutlinedRectangleSprite:
- 		// if we have lineSize <= 0, means we are not drawing anything. so we may return directly.
-@@ -700,8 +724,10 @@ void DirectorPlotData::inkBlitShape(Common::Rect &srcRect) {
- 		primitives->drawRect1(strokeRect, ms->foreColor, this);
- 		break;
- 	case kRoundedRectangleSprite:
--		ms->pd = &plotFill;
--		primitives->drawRoundRect1(fillAreaRect, 12, ms->foreColor, true, this);
-+		if (ink != kInkTypeBackgndTrans) {
-+			ms->pd = &plotFill;
-+			primitives->drawRoundRect1(fillAreaRect, 12, ms->foreColor, true, this);
-+		}
- 		// fall through
- 	case kOutlinedRoundedRectangleSprite:
- 		if (ms->lineSize <= 0)
-@@ -714,8 +740,10 @@ void DirectorPlotData::inkBlitShape(Common::Rect &srcRect) {
- 		primitives->drawRoundRect1(strokeRect, 12, ms->foreColor, false, this);
- 		break;
- 	case kOvalSprite:
--		ms->pd = &plotFill;
--		primitives->drawEllipse(fillAreaRect.left, fillAreaRect.top, fillAreaRect.right, fillAreaRect.bottom, ms->foreColor, true, this);
-+		if (ink != kInkTypeBackgndTrans) {
-+			ms->pd = &plotFill;
-+			primitives->drawEllipse(fillAreaRect.left, fillAreaRect.top, fillAreaRect.right, fillAreaRect.bottom, ms->foreColor, true, this);
-+		}
- 		// fall through
- 	case kOutlinedOvalSprite:
- 		if (ms->lineSize <= 0)
++	}
++}
++
+ } // End of namespace Director
 diff --git a/engines/director/lingo/lingo-builtins.cpp b/engines/director/lingo/lingo-builtins.cpp
 index 9695c048..cab688d7 100644
 --- a/engines/director/lingo/lingo-builtins.cpp
@@ -522,6 +718,42 @@ index f3d966f1..187bd75c 100644
  	ScriptContext *result = nullptr;
  	if (_casts.contains(id.castLib)) {
  		result = _casts.getVal(id.castLib)->_lingoArchive->getScriptContext(type, id.member);
+diff --git a/engines/director/rte.cpp b/engines/director/rte.cpp
+index 3a9c0d53..66140638 100644
+--- a/engines/director/rte.cpp
++++ b/engines/director/rte.cpp
+@@ -84,6 +84,7 @@ Graphics::ManagedSurface *RTE2::createSurface(uint32 foreColor, uint32 bgColor,
+ 	uint8 r = 0, g = 0, b = 0, a = 0;
+ 	pf.colorToRGB(foreColor, r, g, b);
+ 	for (int y = 0; y < _height; y++) {
++		bool endOfLine = false;
+ 		for (int x = 0; x < _width;) {
+ 			uint32 pos = stream.pos();
+ 			byte check = stream.readByte();
+@@ -105,6 +106,7 @@ Graphics::ManagedSurface *RTE2::createSurface(uint32 foreColor, uint32 bgColor,
+ 						*(uint32 *)surface.getBasePtr(x, y) = pf.ARGBToColor(a, r, g, b);
+ 						x += 1;
+ 					}
++					endOfLine = true;
+ 					break;
+ 				}
+ 				for (byte j = 0; j < count; j++) {
+@@ -119,6 +121,15 @@ Graphics::ManagedSurface *RTE2::createSurface(uint32 foreColor, uint32 bgColor,
+ 				x += 1;
+ 			}
+ 		}
++		// A line whose pixels fill the whole width is still terminated by an
++		// end-of-line marker (0x00 0x00). Consume it here, otherwise it is
++		// taken as an empty next line and every following line is shifted
++		// down, which shows up as striped, cut-off text.
++		if (!endOfLine && stream.pos() + 2 <= stream.size()) {
++			int64 eolPos = stream.pos();
++			if (stream.readByte() != 0x00 || stream.readByte() != 0x00)
++				stream.seek(eolPos);
++		}
+ 	}
+ 	Graphics::ManagedSurface *result = new Graphics::ManagedSurface();
+ 	result->create((int16)_width, (int16)_height, pf);
 diff --git a/engines/director/util.cpp b/engines/director/util.cpp
 index c4fa2d0e..78e877e3 100644
 --- a/engines/director/util.cpp

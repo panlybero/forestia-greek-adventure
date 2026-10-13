@@ -48,8 +48,8 @@ This project achieves **100% preservation fidelity without modifying a single by
 ## 🚀 How to Play
 
 ### Option 1: Web Browser (Zero Install)
-You can play the Greek version directly in any modern browser (Chrome, Firefox, Safari, Edge) via our WebAssembly build hosted on GitHub Pages:
-> **[Play Forestia in Browser](https://panlybero.github.io/forestia-greek-adventure/)** *(Coming via GitHub Pages)*
+You can play the Greek version directly in any modern web browser (Chrome, Firefox, Safari, Edge) via the live WebAssembly build on GitHub Pages:
+> 🎮 **[Play Forestia in Browser](https://plympe.com/forestia-greek-adventure/)** *(Mirror: [panlybero.github.io/forestia-greek-adventure](https://panlybero.github.io/forestia-greek-adventure/))*
 
 ### Option 2: Linux / macOS / Windows Desktop
 1. Clone this repository:
